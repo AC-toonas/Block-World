@@ -46,8 +46,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # ---------- LOAD IMAGES ----------
 block_images = {}
 for block_id, name in BLOCKS.items():
-    path = os.path.join(BASE_DIR, f"{name}.png")
-    img = pygame.image.load(path).convert_alpha()
+    img = pygame.image.load(os.path.join(BASE_DIR, f"{name}.png")).convert_alpha()
     img = pygame.transform.scale(img, (blocksize, blocksize))
     block_images[block_id] = img
 
@@ -121,6 +120,11 @@ running = True
 while running:
     clock.tick(60)
 
+    hovered_slot = None
+    hovered_cell = None
+
+    mx, my = pygame.mouse.get_pos()
+
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
@@ -134,7 +138,6 @@ while running:
                 selected_block = DELETE
 
         if event.type == pygame.MOUSEBUTTONDOWN:
-            mx, my = pygame.mouse.get_pos()
             if my >= base_rows * blocksize:
                 for rect, block_id in toolbar_slots:
                     if rect.collidepoint(mx, my):
@@ -176,13 +179,18 @@ while running:
     cam_x = max(0, min(cam_x, world_px_w - screen_width))
     cam_y = max(0, min(cam_y, world_px_h - (screen_height - toolbar_height)))
 
-    mx, my = pygame.mouse.get_pos()
     cx = screen_width // 2
     cy = (screen_height - toolbar_height) // 2
     dxm = mx - cx
     dym = my - cy
     if dxm != 0 or dym != 0:
         player_angle = -math.degrees(math.atan2(dxm, -dym))
+
+    if my < base_rows * blocksize:
+        col = int((mx + cam_x) // blocksize)
+        row = int((my + cam_y) // blocksize)
+        if 0 <= row < world_rows and 0 <= col < world_cols:
+            hovered_cell = (row, col)
 
     start_col = int(cam_x // blocksize)
     start_row = int(cam_y // blocksize)
@@ -194,10 +202,23 @@ while running:
     for r in range(start_row, end_row):
         for c in range(start_col, end_col):
             if 0 <= r < world_rows and 0 <= c < world_cols:
-                block_id = world[r][c]
-                img = block_images.get(block_id)
+                img = block_images.get(world[r][c])
                 if img:
                     screen.blit(img, (c * blocksize - cam_x, r * blocksize - cam_y))
+
+    if hovered_cell:
+        r, c = hovered_cell
+        pygame.draw.rect(
+            screen,
+            (255, 255, 0),
+            (
+                c * blocksize - cam_x,
+                r * blocksize - cam_y,
+                blocksize,
+                blocksize,
+            ),
+            2,
+        )
 
     rotated = pygame.transform.rotate(player_img_original, player_angle)
     rect = rotated.get_rect(center=(screen_width // 2, (screen_height - toolbar_height) // 2))
@@ -206,6 +227,9 @@ while running:
     pygame.draw.rect(screen, (40, 40, 40), (0, base_rows * blocksize, screen_width, toolbar_height))
 
     for rect, block_id in toolbar_slots:
+        if rect.collidepoint(mx, my):
+            hovered_slot = rect
+
         if block_id == DELETE:
             pygame.draw.rect(screen, (180, 50, 50), rect)
             txt = font.render("X", True, (255, 255, 255))
@@ -213,8 +237,12 @@ while running:
         else:
             img = pygame.transform.scale(block_images[block_id], (rect.width, rect.height))
             screen.blit(img, rect.topleft)
+
         if block_id == selected_block:
             pygame.draw.rect(screen, (255, 255, 255), rect, 3)
+
+        if rect == hovered_slot:
+            pygame.draw.rect(screen, (255, 255, 0), rect, 2)
 
     pygame.display.flip()
 
