@@ -12,7 +12,7 @@ screen_height = world_rows * blocksize + toolbar_height
 
 # ---------- BLOCK DEFINITIONS ----------
 BLOCKS = {
-    0: "sky",
+    0: "void",
     1: "grass",
     2: "dirt",
     3: "wood",
@@ -20,7 +20,6 @@ BLOCKS = {
     5: "water",
     6: "stone",
     7: "brick",
-    8: "wall",
 }
 
 DELETE = -1
