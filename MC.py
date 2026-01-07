@@ -31,9 +31,13 @@ GRASS = 1
 WOOD = 3
 LEAVES = 4
 WATER = 5
-
+SOLID_BLOCKS = {WOOD, LEAVES, 6, 7}
+PLAYER_SIZE = 32
+HITBOX_SIZE = 24
 DELETE = -1
 selected_block = GRASS
+
+
 
 # ---------- INIT ----------
 pygame.init()
@@ -98,6 +102,12 @@ for _ in range(250):
             world[row][col - 1] = LEAVES
             world[row][col + 1] = LEAVES
             break
+def is_solid_at(px, py):
+    col = int(px // blocksize)
+    row = int(py // blocksize)
+    if 0 <= row < world_rows and 0 <= col < world_cols:
+        return world[row][col] in SOLID_BLOCKS
+    return True
 
 # ---------- TOOLBAR ----------
 toolbar_slots = []
@@ -160,22 +170,43 @@ while running:
     if keys[pygame.K_d] or keys[pygame.K_RIGHT]:
         dx += 1
 
-    if dx != 0 or dy != 0:
+    if dx or dy:
         length = math.hypot(dx, dy)
         dx /= length
         dy /= length
-        player_x += dx * player_speed
-        player_y += dy * player_speed
+
+    next_x = player_x + dx * player_speed
+    next_y = player_y + dy * player_speed
+
+    half = HITBOX_SIZE // 2
+    edge = half - 1
+
+    def solid(px, py):
+        c = int(px // blocksize)
+        r = int(py // blocksize)
+        if 0 <= r < world_rows and 0 <= c < world_cols:
+            return world[r][c] in SOLID_BLOCKS
+        return True
+
+    if not any(
+        solid(next_x + ox, player_y + oy)
+        for ox, oy in [(-edge, -edge), (edge, -edge), (-edge, edge), (edge, edge)]
+    ):
+        player_x = next_x
+
+    if not any(
+        solid(player_x + ox, next_y + oy)
+        for ox, oy in [(-edge, -edge), (edge, -edge), (-edge, edge), (edge, edge)]
+    ):
+        player_y = next_y
 
     world_px_w = world_cols * blocksize
     world_px_h = world_rows * blocksize
-
     player_x = max(0, min(player_x, world_px_w))
     player_y = max(0, min(player_y, world_px_h))
 
     cam_x = player_x - screen_width // 2
     cam_y = player_y - (screen_height - toolbar_height) // 2
-
     cam_x = max(0, min(cam_x, world_px_w - screen_width))
     cam_y = max(0, min(cam_y, world_px_h - (screen_height - toolbar_height)))
 
@@ -183,7 +214,7 @@ while running:
     cy = (screen_height - toolbar_height) // 2
     dxm = mx - cx
     dym = my - cy
-    if dxm != 0 or dym != 0:
+    if dxm or dym:
         player_angle = -math.degrees(math.atan2(dxm, -dym))
 
     if my < base_rows * blocksize:
@@ -211,12 +242,7 @@ while running:
         pygame.draw.rect(
             screen,
             (255, 255, 0),
-            (
-                c * blocksize - cam_x,
-                r * blocksize - cam_y,
-                blocksize,
-                blocksize,
-            ),
+            (c * blocksize - cam_x, r * blocksize - cam_y, blocksize, blocksize),
             2,
         )
 
@@ -224,7 +250,11 @@ while running:
     rect = rotated.get_rect(center=(screen_width // 2, (screen_height - toolbar_height) // 2))
     screen.blit(rotated, rect.topleft)
 
-    pygame.draw.rect(screen, (40, 40, 40), (0, base_rows * blocksize, screen_width, toolbar_height))
+    pygame.draw.rect(
+        screen,
+        (40, 40, 40),
+        (0, base_rows * blocksize, screen_width, toolbar_height),
+    )
 
     for rect, block_id in toolbar_slots:
         if rect.collidepoint(mx, my):
