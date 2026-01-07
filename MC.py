@@ -17,27 +17,29 @@ world_cols = base_cols * world_multiplier
 world_rows = base_rows * world_multiplier
 
 player_speed = 4
+PLAYER_SIZE = 32
+HITBOX_SIZE = 24
 
 # ---------- BLOCK DEFINITIONS ----------
 BLOCKS = {
+    0: "void",
     1: "grass",
+    2: "dirt",
     3: "wood",
     4: "leaves",
     5: "water",
     6: "stone",
     7: "brick",
 }
+
 GRASS = 1
 WOOD = 3
 LEAVES = 4
 WATER = 5
-SOLID_BLOCKS = {WOOD, LEAVES, 6, 7}
-PLAYER_SIZE = 32
-HITBOX_SIZE = 24
+
+SOLID_BLOCKS = {0, 3, 4, 6, 7}
 DELETE = -1
 selected_block = GRASS
-
-
 
 # ---------- INIT ----------
 pygame.init()
@@ -50,9 +52,11 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # ---------- LOAD IMAGES ----------
 block_images = {}
 for block_id, name in BLOCKS.items():
-    img = pygame.image.load(os.path.join(BASE_DIR, f"{name}.png")).convert_alpha()
-    img = pygame.transform.scale(img, (blocksize, blocksize))
-    block_images[block_id] = img
+    path = os.path.join(BASE_DIR, f"{name}.png")
+    if os.path.exists(path):
+        img = pygame.image.load(path).convert_alpha()
+        img = pygame.transform.scale(img, (blocksize, blocksize))
+        block_images[block_id] = img
 
 player_img_original = pygame.image.load(os.path.join(BASE_DIR, "player.png")).convert_alpha()
 player_img_original = pygame.transform.scale(player_img_original, (32, 32))
@@ -102,12 +106,6 @@ for _ in range(250):
             world[row][col - 1] = LEAVES
             world[row][col + 1] = LEAVES
             break
-def is_solid_at(px, py):
-    col = int(px // blocksize)
-    row = int(py // blocksize)
-    if 0 <= row < world_rows and 0 <= col < world_cols:
-        return world[row][col] in SOLID_BLOCKS
-    return True
 
 # ---------- TOOLBAR ----------
 toolbar_slots = []
@@ -132,7 +130,6 @@ while running:
 
     hovered_slot = None
     hovered_cell = None
-
     mx, my = pygame.mouse.get_pos()
 
     for event in pygame.event.get():
@@ -188,16 +185,10 @@ while running:
             return world[r][c] in SOLID_BLOCKS
         return True
 
-    if not any(
-        solid(next_x + ox, player_y + oy)
-        for ox, oy in [(-edge, -edge), (edge, -edge), (-edge, edge), (edge, edge)]
-    ):
+    if not any(solid(next_x + ox, player_y + oy) for ox, oy in [(-edge,-edge),(edge,-edge),(-edge,edge),(edge,edge)]):
         player_x = next_x
 
-    if not any(
-        solid(player_x + ox, next_y + oy)
-        for ox, oy in [(-edge, -edge), (edge, -edge), (-edge, edge), (edge, edge)]
-    ):
+    if not any(solid(player_x + ox, next_y + oy) for ox, oy in [(-edge,-edge),(edge,-edge),(-edge,edge),(edge,edge)]):
         player_y = next_y
 
     world_px_w = world_cols * blocksize
@@ -239,40 +230,29 @@ while running:
 
     if hovered_cell:
         r, c = hovered_cell
-        pygame.draw.rect(
-            screen,
-            (255, 255, 0),
-            (c * blocksize - cam_x, r * blocksize - cam_y, blocksize, blocksize),
-            2,
-        )
+        pygame.draw.rect(screen, (255,255,0),(c*blocksize-cam_x,r*blocksize-cam_y,blocksize,blocksize),2)
 
     rotated = pygame.transform.rotate(player_img_original, player_angle)
-    rect = rotated.get_rect(center=(screen_width // 2, (screen_height - toolbar_height) // 2))
+    rect = rotated.get_rect(center=(screen_width//2,(screen_height-toolbar_height)//2))
     screen.blit(rotated, rect.topleft)
 
-    pygame.draw.rect(
-        screen,
-        (40, 40, 40),
-        (0, base_rows * blocksize, screen_width, toolbar_height),
-    )
+    pygame.draw.rect(screen,(40,40,40),(0,base_rows*blocksize,screen_width,toolbar_height))
 
     for rect, block_id in toolbar_slots:
         if rect.collidepoint(mx, my):
             hovered_slot = rect
-
         if block_id == DELETE:
-            pygame.draw.rect(screen, (180, 50, 50), rect)
-            txt = font.render("X", True, (255, 255, 255))
-            screen.blit(txt, txt.get_rect(center=rect.center))
+            pygame.draw.rect(screen,(180,50,50),rect)
+            t = font.render("X",True,(255,255,255))
+            screen.blit(t,t.get_rect(center=rect.center))
         else:
-            img = pygame.transform.scale(block_images[block_id], (rect.width, rect.height))
-            screen.blit(img, rect.topleft)
-
+            if block_id in block_images:
+                img = pygame.transform.scale(block_images[block_id],(rect.width,rect.height))
+                screen.blit(img,rect.topleft)
         if block_id == selected_block:
-            pygame.draw.rect(screen, (255, 255, 255), rect, 3)
-
+            pygame.draw.rect(screen,(255,255,255),rect,3)
         if rect == hovered_slot:
-            pygame.draw.rect(screen, (255, 255, 0), rect, 2)
+            pygame.draw.rect(screen,(255,255,0),rect,2)
 
     pygame.display.flip()
 
