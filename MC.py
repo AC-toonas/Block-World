@@ -4,7 +4,7 @@ import random
 import math
 
 # ---------- VERSION ----------
-GAME_VERSION = "Alpha-0.1"
+GAME_VERSION = "Alpha-0.2"
 
 # ---------- CONFIG ----------
 blocksize = 32
@@ -23,6 +23,10 @@ world_rows = base_rows * world_multiplier
 player_speed = 4
 PLAYER_SIZE = 32
 HITBOX_SIZE = 24
+
+# ---------- OPTIONS ----------
+better_grass_enabled = False
+show_options_menu = False
 
 # ---------- BLOCK DEFINITIONS ----------
 BLOCKS = {
@@ -45,7 +49,6 @@ STONE = 6
 BRICK = 7
 
 SOLID_BLOCKS = {WOOD, LEAVES, STONE, BRICK}
-
 DELETE = -1
 
 # ---------- INIT ----------
@@ -67,6 +70,16 @@ for bid, name in BLOCKS.items():
 
 player_img = pygame.image.load(os.path.join(BASE_DIR, "player.png")).convert_alpha()
 player_img = pygame.transform.scale(player_img, (32, 32))
+
+def tint_image(img, tint):
+    s = img.copy()
+    overlay = pygame.Surface(s.get_size(), pygame.SRCALPHA)
+    overlay.fill(tint)
+    s.blit(overlay, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+    return s
+
+grass_normal = block_images.get(GRASS)
+grass_dark = tint_image(grass_normal, (120, 180, 120, 255)) if grass_normal else None
 
 # ---------- WORLD GENERATION ----------
 def generate_world(preset):
@@ -191,7 +204,9 @@ def start_menu():
 def build_toolbar_slots(mode, inventory):
     ids = []
     if mode == "creative":
-        ids = list(BLOCKS.keys())
+        for bid in sorted(BLOCKS.keys()):
+            if bid != 0:
+                ids.append(bid)
     else:
         for bid in sorted(BLOCKS.keys()):
             if bid == 0:
@@ -199,6 +214,7 @@ def build_toolbar_slots(mode, inventory):
             if inventory.get(bid, 0) > 0:
                 ids.append(bid)
     ids.append(DELETE)
+
     slots = []
     slot_size = 48
     slot_padding = 8
@@ -241,6 +257,8 @@ def draw_toolbar(mode, slots, selected_block, inventory, mx, my):
 
 # ---------- GAME ----------
 def run_game(mode, preset):
+    global better_grass_enabled, show_options_menu
+
     world = generate_world(preset)
 
     inventory = {bid: 0 for bid in BLOCKS.keys()}
@@ -254,6 +272,11 @@ def run_game(mode, preset):
     mine_progress = 0
     mining = False
     MINE_TIME = 45
+
+    options_button_rect = pygame.Rect(screen_width - 36, 8, 28, 28)
+    menu_rect = pygame.Rect(screen_width - 220, 40, 200, 90)
+    quit_rect = pygame.Rect(menu_rect.x + 10, menu_rect.y + 10, 180, 30)
+    grass_rect = pygame.Rect(menu_rect.x + 10, menu_rect.y + 50, 180, 30)
 
     def solid_at(px_, py_):
         c = int(px_ // blocksize)
@@ -319,11 +342,6 @@ def run_game(mode, preset):
                 hovered_cell = (r, c)
 
         toolbar_slots = build_toolbar_slots(mode, inventory)
-        hovered_toolbar_rect = None
-        for rect, bid in toolbar_slots:
-            if rect.collidepoint(mx, my):
-                hovered_toolbar_rect = rect
-                break
 
         for e in pygame.event.get():
             if e.type == pygame.QUIT:
@@ -332,13 +350,26 @@ def run_game(mode, preset):
             if e.type == pygame.KEYDOWN:
                 if e.key == pygame.K_x:
                     selected_block = DELETE
-                if pygame.K_0 <= e.key <= pygame.K_9:
+                if pygame.K_1 <= e.key <= pygame.K_9:
                     idx = e.key - pygame.K_1
                     ids = [bid for _, bid in toolbar_slots]
                     if 0 <= idx < len(ids):
                         selected_block = ids[idx]
 
             if e.type == pygame.MOUSEBUTTONDOWN:
+                if options_button_rect.collidepoint(mx, my):
+                    show_options_menu = not show_options_menu
+                    continue
+
+                if show_options_menu:
+                    if quit_rect.collidepoint(mx, my):
+                        show_options_menu = False
+                        return
+                    if grass_rect.collidepoint(mx, my):
+                        better_grass_enabled = not better_grass_enabled
+                        show_options_menu = False
+                    continue
+
                 if my >= view_height:
                     for rect, bid in toolbar_slots:
                         if rect.collidepoint(mx, my):
@@ -403,7 +434,11 @@ def run_game(mode, preset):
         for r in range(start_row, end_row):
             for c in range(start_col, end_col):
                 if 0 <= r < world_rows and 0 <= c < world_cols:
-                    img = block_images.get(world[r][c])
+                    bid = world[r][c]
+                    if bid == GRASS and better_grass_enabled and grass_dark:
+                        img = grass_dark
+                    else:
+                        img = block_images.get(bid)
                     if img:
                         screen.blit(img, (c * blocksize - cam_x, r * blocksize - cam_y))
 
@@ -428,11 +463,34 @@ def run_game(mode, preset):
         rot = pygame.transform.rotate(player_img, angle)
         screen.blit(rot, rot.get_rect(center=(cx, cy)))
 
+        pygame.draw.rect(screen, (60, 60, 60), options_button_rect, border_radius=6)
+        dots = font.render("⋮", True, (255, 255, 255))
+        screen.blit(dots, dots.get_rect(center=options_button_rect.center))
+
+        if show_options_menu:
+            pygame.draw.rect(screen, (30, 30, 30), menu_rect, border_radius=8)
+            pygame.draw.rect(screen, (255, 255, 255), menu_rect, 2, border_radius=8)
+
+            pygame.draw.rect(screen, (60, 60, 60), quit_rect)
+            pygame.draw.rect(screen, (60, 60, 60), grass_rect)
+
+            qtxt = font.render("Quit & New Game", True, (255, 255, 255))
+            gtxt = font.render(
+                f"Better Grass: {'ON' if better_grass_enabled else 'OFF'}",
+                True,
+                (255, 220, 0) if better_grass_enabled else (200, 200, 200),
+            )
+
+            screen.blit(qtxt, qtxt.get_rect(center=quit_rect.center))
+            screen.blit(gtxt, gtxt.get_rect(center=grass_rect.center))
+
         draw_toolbar(mode, toolbar_slots, selected_block, inventory, mx, my)
 
         pygame.display.flip()
 
 # ---------- ENTRY ----------
-mode, preset = start_menu()
-run_game(mode, preset)
+while True:
+    mode, preset = start_menu()
+    run_game(mode, preset)
+
 pygame.quit()
