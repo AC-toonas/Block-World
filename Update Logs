@@ -111,3 +111,5 @@ Alpha-0.2
   - Optimized tile rendering and camera clamping
 - Minor UI polish and consistent fonts used across menus and toolbar.
 
+Alpha-0.21 tiny update
+- fixed placement of blocks in survival mode
