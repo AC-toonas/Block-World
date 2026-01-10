@@ -96,7 +96,7 @@ v1.8 — Misc improvements & edge-case handling
 - Added safety checks in `area_is_clear` to avoid placing lakes/trees near edges.
 - Fixed player bounds clamping to world pixel dimensions.
 
-Alpha-0.2 — Current (documented in MC.py)
+Alpha-0.2 
 - Set GAME_VERSION = "Alpha-0.2".
 - Finalized combined features:
   - Start menu with version display
@@ -110,3 +110,4 @@ Alpha-0.2 — Current (documented in MC.py)
   - Placement rules, options menu and toggles
   - Optimized tile rendering and camera clamping
 - Minor UI polish and consistent fonts used across menus and toolbar.
+

@@ -295,7 +295,8 @@ def run_game(mode, preset):
         return True
 
     def mineable(bid):
-        return bid in {WOOD, LEAVES, STONE, BRICK, DIRT}
+        return bid in {GRASS, DIRT, WOOD, LEAVES}
+
 
     running = True
     while running:
@@ -399,7 +400,7 @@ def run_game(mode, preset):
                             else:
                                 world[r][c] = selected_block
                         else:
-                            if e.button == 3:
+                            if pygame.mouse.get_pressed()[2]:
                                 if selected_block != DELETE and inventory.get(selected_block, 0) > 0:
                                     if world[r][c] == GRASS or world[r][c] == WATER:
                                         world[r][c] = selected_block
@@ -431,7 +432,13 @@ def run_game(mode, preset):
                 else:
                     mine_progress += 1
                     if mine_progress >= MINE_TIME:
-                        inventory[bid] = inventory.get(bid, 0) + 1
+                        if bid == GRASS:
+                            inventory[DIRT] += 1
+                        else:
+                            inventory[bid] += 1
+
+                        world[r][c] = GRASS
+
                         world[r][c] = GRASS
                         mine_progress = 0
                         mining = False
