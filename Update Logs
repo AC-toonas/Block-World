@@ -1,1 +1,112 @@
-UPDATE LOG
+v0.1 — Initial prototype
+- Created main loop and window (pygame init, display mode).
+- Added a basic game entry point (infinite loop calling start menu and run_game).
+- Implemented a single-tile grid render routine (basic fill/draw).
+
+v0.2 — Basic blocks & constants
+- Introduced BLOCKS dictionary (IDs → names).
+- Added block ID constants (GRASS, DIRT, WOOD, etc.).
+- Added DELETE constant for toolbar delete slot.
+- Added SOLID_BLOCKS set for collision checks.
+
+v0.3 — Image assets & scaling
+- Added file-loading for block images from repo (e.g., `grass.png`).
+- Added player images (`player.png` and `player-eyeclosed.png`) and scaled them.
+- Implemented safe check for missing images (only load if present).
+
+v0.4 — World sizing and layout
+- Added configuration for blocksize, base_cols/base_rows and world_multiplier.
+- Computed screen dimensions, view height, world_cols and world_rows.
+- Added world bounds clamping for player and camera.
+
+v0.5 — World generation (grass baseline)
+- Implemented `generate_world` returning an all-GRASS world for basic start.
+- Added `area_is_clear` helper used by later generators.
+
+v0.6 — Lakes & trees generation + presets
+- Added randomized lake generation (square water pools).
+- Added randomized tree generation (WOOD trunk + LEAVES neighbors).
+- Introduced world generation presets: `normal`, `crowded`, `free`.
+- Tuned `lake_count` and `tree_count` per preset.
+
+v0.7 — Player movement & collision
+- Implemented player position, movement with WASD/arrow keys.
+- Added hitbox (`HITBOX_SIZE`) and `solid_at` collision checks.
+- Added normalized diagonal movement (vector normalization).
+- Added camera following player (centered viewport).
+
+v0.8 — Player rendering polish
+- Added player blink animation (blink_timer, blink_interval, blink_duration).
+- Added player rotation to face mouse cursor (angle calculation & rotate blit).
+- Added center-drawing of player sprite.
+
+v0.9 — UI: Start menu and UI basics
+- Implemented start menu with title and version display.
+- Added Play buttons: Survival and Creative.
+- Added world preset selection UI (Normal, Crowded, Free).
+- Added fonts for title, buttons and small text.
+
+v1.0 — Toolbar UI & slot system
+- Implemented toolbar drawing at bottom (toolbar height, slots).
+- Added `build_toolbar_slots` to populate toolbar slots (creative vs survival rules).
+- Added visual highlights for selected and hovered slots.
+- Added keyboard hotkeys (1–9) to select toolbar slots and `X` for delete.
+
+v1.1 — Creative mode & placement
+- Creative: allowed instant placing of any block selected from the toolbar.
+- Creative toolbar lists all blocks (except void).
+- Placement in creative writes selected block into world immediately.
+
+v1.2 — Survival mode basics & inventory
+- Added `inventory` mapping for block counts.
+- Survival toolbar only shows blocks with inventory > 0 plus DELETE slot.
+- Right-click placement in survival consumes inventory and only places on GRASS or WATER.
+- Added selected_block initialization differences (DELETE for survival, GRASS for creative).
+
+v1.3 — Mining system & progress
+- Introduced mining behavior: hold left mouse to mine mineable blocks.
+- Added `mineable` set (WOOD, LEAVES, STONE, BRICK, DIRT).
+- Added mining progress tracking (`mine_target`, `mine_progress`, `MINE_TIME`).
+- Added mining completion: increase inventory and set mined tile to GRASS.
+- Added on-screen mining progress bar while mining.
+
+v1.4 — Placement rules and deletion
+- Implemented DELETE toolbar slot to replace a block with GRASS.
+- Enforced survival placement constraints (inventory check).
+- Handled mouse button logic for placement and mining (mousedown/mouseup).
+
+v1.5 — Options menu & toggles
+- Added options button in-game (three-dot button).
+- Implemented options menu with:
+  - "Quit & New Game" (returns to menu)
+  - "Better Grass" toggle that flips `better_grass_enabled`
+- Hooked options menu visibility to a toggled state.
+
+v1.6 — Visual polish & grass tinting
+- Added `tint_image` helper to generate `grass_dark`.
+- Implemented `better_grass_enabled` behavior to use `grass_dark` for grass tiles.
+- Improved toolbar visuals and inventory counts overlay (small font).
+
+v1.7 — Rendering optimization & viewport culling
+- Optimized draw loop to only render visible tile rectangle (start_row/start_col → end_row/end_col).
+- Clamped camera to world pixel bounds to prevent out-of-range drawing.
+
+v1.8 — Misc improvements & edge-case handling
+- Added robust coordinate checks for hovered cell and tile indices.
+- Added safety checks in `area_is_clear` to avoid placing lakes/trees near edges.
+- Fixed player bounds clamping to world pixel dimensions.
+
+Alpha-0.2 — Current (documented in MC.py)
+- Set GAME_VERSION = "Alpha-0.2".
+- Finalized combined features:
+  - Start menu with version display
+  - Survival & Creative modes
+  - World presets: Normal, Crowded, Free
+  - World generation (lakes + trees)
+  - Block images, player images, tinting for better grass
+  - Player movement, collision, rotation & blinking
+  - Toolbar + slot selection, keyboard hotkeys, DELETE slot
+  - Inventory system, mining mechanics + progress bar
+  - Placement rules, options menu and toggles
+  - Optimized tile rendering and camera clamping
+- Minor UI polish and consistent fonts used across menus and toolbar.
