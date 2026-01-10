@@ -70,6 +70,11 @@ for bid, name in BLOCKS.items():
 
 player_img = pygame.image.load(os.path.join(BASE_DIR, "player.png")).convert_alpha()
 player_img = pygame.transform.scale(player_img, (32, 32))
+player_eyeclosed_img = pygame.image.load(
+    os.path.join(BASE_DIR, "player-eyeclosed.png")
+).convert_alpha()
+player_eyeclosed_img = pygame.transform.scale(player_eyeclosed_img, (32, 32))
+
 
 def tint_image(img, tint):
     s = img.copy()
@@ -266,6 +271,10 @@ def run_game(mode, preset):
 
     px = (world_cols * blocksize) // 2
     py = (world_rows * blocksize) // 2
+    blink_timer = 0
+    blink_interval = 180
+    blink_duration = 8
+
     angle = 0
 
     mine_target = None
@@ -291,6 +300,10 @@ def run_game(mode, preset):
     running = True
     while running:
         clock.tick(60)
+        blink_timer += 1
+        if blink_timer > blink_interval + blink_duration:
+            blink_timer = 0
+
 
         mx, my = pygame.mouse.get_pos()
 
@@ -460,8 +473,14 @@ def run_game(mode, preset):
             fill = int(bar_w * (mine_progress / MINE_TIME))
             pygame.draw.rect(screen, (255, 220, 0), (x, y, fill, bar_h))
 
-        rot = pygame.transform.rotate(player_img, angle)
+        if blink_interval <= blink_timer < blink_interval + blink_duration:
+            base_img = player_eyeclosed_img
+        else:
+            base_img = player_img
+
+        rot = pygame.transform.rotate(base_img, angle)
         screen.blit(rot, rot.get_rect(center=(cx, cy)))
+
 
         pygame.draw.rect(screen, (60, 60, 60), options_button_rect, border_radius=6)
         dots = font.render("⋮", True, (255, 255, 255))
