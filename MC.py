@@ -4,7 +4,7 @@ import random
 import math
 
 # ---------- VERSION ----------
-GAME_VERSION = "Alpha-0.2"
+GAME_VERSION = "Alpha-0.25"
 
 # ---------- CONFIG ----------
 blocksize = 32
@@ -74,7 +74,6 @@ player_eyeclosed_img = pygame.image.load(
     os.path.join(BASE_DIR, "player-eyeclosed.png")
 ).convert_alpha()
 player_eyeclosed_img = pygame.transform.scale(player_eyeclosed_img, (32, 32))
-
 
 def tint_image(img, tint):
     s = img.copy()
@@ -266,6 +265,11 @@ def run_game(mode, preset):
 
     world = generate_world(preset)
 
+    def get_block(r, c):
+        if 0 <= r < world_rows and 0 <= c < world_cols:
+            return world[r][c]
+        return 0
+
     inventory = {bid: 0 for bid in BLOCKS.keys()}
     selected_block = DELETE if mode == "survival" else GRASS
 
@@ -290,13 +294,11 @@ def run_game(mode, preset):
     def solid_at(px_, py_):
         c = int(px_ // blocksize)
         r = int(py_ // blocksize)
-        if 0 <= r < world_rows and 0 <= c < world_cols:
-            return world[r][c] in SOLID_BLOCKS
-        return True
+        bid = get_block(r, c)
+        return bid == 0 or (bid in SOLID_BLOCKS)
 
     def mineable(bid):
         return bid in {GRASS, DIRT, WOOD, LEAVES}
-
 
     running = True
     while running:
@@ -304,7 +306,6 @@ def run_game(mode, preset):
         blink_timer += 1
         if blink_timer > blink_interval + blink_duration:
             blink_timer = 0
-
 
         mx, my = pygame.mouse.get_pos()
 
@@ -335,13 +336,15 @@ def run_game(mode, preset):
 
         world_px_w = world_cols * blocksize
         world_px_h = world_rows * blocksize
-        px = max(0, min(px, world_px_w))
-        py = max(0, min(py, world_px_h))
+
+        px = max(0, min(px, world_px_w - 1))
+        py = max(0, min(py, world_px_h - 1))
 
         cam_x = px - screen_width // 2
         cam_y = py - view_height // 2
-        cam_x = max(0, min(cam_x, world_px_w - screen_width))
-        cam_y = max(0, min(cam_y, world_px_h - view_height))
+
+        cam_x = max(-screen_width // 2, min(cam_x, world_px_w - screen_width // 2))
+        cam_y = max(-view_height // 2, min(cam_y, world_px_h - view_height // 2))
 
         cx = screen_width // 2
         cy = view_height // 2
@@ -352,8 +355,7 @@ def run_game(mode, preset):
         if my < view_height:
             c = int((mx + cam_x) // blocksize)
             r = int((my + cam_y) // blocksize)
-            if 0 <= r < world_rows and 0 <= c < world_cols:
-                hovered_cell = (r, c)
+            hovered_cell = (r, c)
 
         toolbar_slots = build_toolbar_slots(mode, inventory)
 
@@ -392,7 +394,10 @@ def run_game(mode, preset):
                 else:
                     if hovered_cell:
                         r, c = hovered_cell
-                        bid = world[r][c]
+                        bid = get_block(r, c)
+
+                        if bid == 0:
+                            continue
 
                         if mode == "creative":
                             if selected_block == DELETE:
@@ -402,7 +407,7 @@ def run_game(mode, preset):
                         else:
                             if pygame.mouse.get_pressed()[2]:
                                 if selected_block != DELETE and inventory.get(selected_block, 0) > 0:
-                                    if world[r][c] == GRASS or world[r][c] == WATER:
+                                    if get_block(r, c) == GRASS or get_block(r, c) == WATER:
                                         world[r][c] = selected_block
                                         inventory[selected_block] -= 1
                             if e.button == 1:
@@ -424,8 +429,8 @@ def run_game(mode, preset):
                 mine_target = None
                 mine_progress = 0
             else:
-                bid = world[r][c]
-                if not mineable(bid) or bid in {GRASS, WATER}:
+                bid = get_block(r, c)
+                if bid == 0 or not mineable(bid) or bid in {GRASS, WATER}:
                     mining = False
                     mine_target = None
                     mine_progress = 0
@@ -436,8 +441,6 @@ def run_game(mode, preset):
                             inventory[DIRT] += 1
                         else:
                             inventory[bid] += 1
-
-                        world[r][c] = GRASS
 
                         world[r][c] = GRASS
                         mine_progress = 0
@@ -453,14 +456,13 @@ def run_game(mode, preset):
 
         for r in range(start_row, end_row):
             for c in range(start_col, end_col):
-                if 0 <= r < world_rows and 0 <= c < world_cols:
-                    bid = world[r][c]
-                    if bid == GRASS and better_grass_enabled and grass_dark:
-                        img = grass_dark
-                    else:
-                        img = block_images.get(bid)
-                    if img:
-                        screen.blit(img, (c * blocksize - cam_x, r * blocksize - cam_y))
+                bid = get_block(r, c)
+                if bid == GRASS and better_grass_enabled and grass_dark:
+                    img = grass_dark
+                else:
+                    img = block_images.get(bid)
+                if img:
+                    screen.blit(img, (c * blocksize - cam_x, r * blocksize - cam_y))
 
         if hovered_cell:
             r, c = hovered_cell
@@ -487,7 +489,6 @@ def run_game(mode, preset):
 
         rot = pygame.transform.rotate(base_img, angle)
         screen.blit(rot, rot.get_rect(center=(cx, cy)))
-
 
         pygame.draw.rect(screen, (60, 60, 60), options_button_rect, border_radius=6)
         dots = font.render("⋮", True, (255, 255, 255))

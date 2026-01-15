@@ -113,3 +113,7 @@ Alpha-0.2
 
 Alpha-0.21 tiny update
 - fixed placement of blocks in survival mode
+
+Alpha-0.25 
+ - added world border
+ - added void blocks out of border
