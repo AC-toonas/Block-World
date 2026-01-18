@@ -285,17 +285,10 @@ def run_game(mode, preset):
 
     world = generate_world(preset)
 
-    save_data = load_game(1)
-    if save_data:
-        world = save_data.get("world", world)
-        px = save_data.get("px", (world_cols * blocksize) // 2)
-        py = save_data.get("py", (world_rows * blocksize) // 2)
-        inventory = save_data.get("inventory", {bid: 0 for bid in BLOCKS.keys()})
-        better_grass_enabled = save_data.get("better_grass", better_grass_enabled)
-    else:
-        inventory = {bid: 0 for bid in BLOCKS.keys()}
-        px = (world_cols * blocksize) // 2
-        py = (world_rows * blocksize) // 2
+    inventory = {bid: 0 for bid in BLOCKS.keys()}
+    px = (world_cols * blocksize) // 2
+    py = (world_rows * blocksize) // 2
+
 
     selected_block = DELETE if mode == "survival" else GRASS
 
@@ -620,11 +613,16 @@ def run_game(mode, preset):
                 txt = font.render(label, True, (255, 255, 255))
                 screen.blit(txt, txt.get_rect(center=rect.center))
 
-                hint = small_font.render("Left=Load/Save   Right=Overwrite Save", True, (200, 200, 200))
-                screen.blit(hint, (save_menu_rect.x + 40, save_menu_rect.y + 175))
-
                 if rect.collidepoint(mx, my):
                     pygame.draw.rect(screen, (255, 255, 0), rect, 2)
+            
+            hint = small_font.render(
+                "Left Click: Load / Save    Right Click: Overwrite Save",
+                True,
+                (200, 200, 200),
+            )
+            screen.blit(hint, (save_menu_rect.x + 40, save_menu_rect.y + 185))
+
 
             pygame.draw.rect(screen, (80, 80, 80), back_rect)
             btxt = font.render("Back", True, (255, 255, 255))

@@ -121,3 +121,7 @@ Alpha-0.25
 Alpha-0.29
  - added saving
  - added loading
+
+Alpha-0.3
+ - fixed loading and saving
+ - fix load and save UI
