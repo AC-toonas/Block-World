@@ -2,6 +2,7 @@ import pygame
 import os
 import random
 import math
+import pickle
 
 # ---------- VERSION ----------
 GAME_VERSION = "Alpha-0.25"
@@ -27,6 +28,7 @@ HITBOX_SIZE = 24
 # ---------- OPTIONS ----------
 better_grass_enabled = False
 show_options_menu = False
+show_save_menu = False
 
 # ---------- BLOCK DEFINITIONS ----------
 BLOCKS = {
@@ -259,22 +261,49 @@ def draw_toolbar(mode, slots, selected_block, inventory, mx, my):
 
     return hovered_slot
 
+# ---------- SAVES ----------
+SAVE_DIR = BASE_DIR
+
+def save_game(slot, data):
+    path = os.path.join(SAVE_DIR, f"save_slot_{slot}.dat")
+    with open(path, "wb") as f:
+        pickle.dump(data, f)
+
+def load_game(slot):
+    path = os.path.join(SAVE_DIR, f"save_slot_{slot}.dat")
+    if not os.path.exists(path):
+        return None
+    with open(path, "rb") as f:
+        return pickle.load(f)
+
+def save_exists(slot):
+    return os.path.exists(os.path.join(SAVE_DIR, f"save_slot_{slot}.dat"))
+
 # ---------- GAME ----------
 def run_game(mode, preset):
-    global better_grass_enabled, show_options_menu
+    global better_grass_enabled, show_options_menu, show_save_menu
 
     world = generate_world(preset)
+
+    save_data = load_game(1)
+    if save_data:
+        world = save_data.get("world", world)
+        px = save_data.get("px", (world_cols * blocksize) // 2)
+        py = save_data.get("py", (world_rows * blocksize) // 2)
+        inventory = save_data.get("inventory", {bid: 0 for bid in BLOCKS.keys()})
+        better_grass_enabled = save_data.get("better_grass", better_grass_enabled)
+    else:
+        inventory = {bid: 0 for bid in BLOCKS.keys()}
+        px = (world_cols * blocksize) // 2
+        py = (world_rows * blocksize) // 2
+
+    selected_block = DELETE if mode == "survival" else GRASS
 
     def get_block(r, c):
         if 0 <= r < world_rows and 0 <= c < world_cols:
             return world[r][c]
         return 0
 
-    inventory = {bid: 0 for bid in BLOCKS.keys()}
-    selected_block = DELETE if mode == "survival" else GRASS
-
-    px = (world_cols * blocksize) // 2
-    py = (world_rows * blocksize) // 2
     blink_timer = 0
     blink_interval = 180
     blink_duration = 8
@@ -287,9 +316,14 @@ def run_game(mode, preset):
     MINE_TIME = 45
 
     options_button_rect = pygame.Rect(screen_width - 36, 8, 28, 28)
-    menu_rect = pygame.Rect(screen_width - 220, 40, 200, 90)
+    menu_rect = pygame.Rect(screen_width - 220, 40, 200, 130)
     quit_rect = pygame.Rect(menu_rect.x + 10, menu_rect.y + 10, 180, 30)
     grass_rect = pygame.Rect(menu_rect.x + 10, menu_rect.y + 50, 180, 30)
+    save_rect = pygame.Rect(menu_rect.x + 10, menu_rect.y + 90, 180, 30)
+
+    save_menu_rect = pygame.Rect(screen_width // 2 - 180, 120, 360, 260)
+    slot_rects = [pygame.Rect(save_menu_rect.x + 40, save_menu_rect.y + 60 + i * 50, 280, 40) for i in range(3)]
+    back_rect = pygame.Rect(save_menu_rect.x + 100, save_menu_rect.y + 210, 160, 36)
 
     def solid_at(px_, py_):
         c = int(px_ // blocksize)
@@ -336,13 +370,11 @@ def run_game(mode, preset):
 
         world_px_w = world_cols * blocksize
         world_px_h = world_rows * blocksize
-
         px = max(0, min(px, world_px_w - 1))
         py = max(0, min(py, world_px_h - 1))
 
         cam_x = px - screen_width // 2
         cam_y = py - view_height // 2
-
         cam_x = max(-screen_width // 2, min(cam_x, world_px_w - screen_width // 2))
         cam_y = max(-view_height // 2, min(cam_y, world_px_h - view_height // 2))
 
@@ -375,6 +407,56 @@ def run_game(mode, preset):
             if e.type == pygame.MOUSEBUTTONDOWN:
                 if options_button_rect.collidepoint(mx, my):
                     show_options_menu = not show_options_menu
+                    show_save_menu = False
+                    continue
+
+                if show_save_menu:
+                    clicked_slot = None
+                    for i, rect in enumerate(slot_rects):
+                        if rect.collidepoint(mx, my):
+                            clicked_slot = i + 1
+                            break
+
+                    if clicked_slot is not None:
+                        if e.button == 3:
+                            save_game(clicked_slot, {
+                                "world": world,
+                                "px": px,
+                                "py": py,
+                                "inventory": inventory,
+                                "better_grass": better_grass_enabled,
+                                "mode": mode,
+                                "preset": preset,
+                                "version": GAME_VERSION,
+                            })
+                        else:
+                            if save_exists(clicked_slot):
+                                data = load_game(clicked_slot)
+                                if data:
+                                    world = data.get("world", world)
+                                    px = data.get("px", px)
+                                    py = data.get("py", py)
+                                    inventory = data.get("inventory", inventory)
+                                    better_grass_enabled = data.get("better_grass", better_grass_enabled)
+                                    selected_block = DELETE if mode == "survival" else GRASS
+                            else:
+                                save_game(clicked_slot, {
+                                    "world": world,
+                                    "px": px,
+                                    "py": py,
+                                    "inventory": inventory,
+                                    "better_grass": better_grass_enabled,
+                                    "mode": mode,
+                                    "preset": preset,
+                                    "version": GAME_VERSION,
+                                })
+                        show_save_menu = False
+                        continue
+
+                    if back_rect.collidepoint(mx, my):
+                        show_save_menu = False
+                        continue
+
                     continue
 
                 if show_options_menu:
@@ -384,6 +466,11 @@ def run_game(mode, preset):
                     if grass_rect.collidepoint(mx, my):
                         better_grass_enabled = not better_grass_enabled
                         show_options_menu = False
+                        continue
+                    if save_rect.collidepoint(mx, my):
+                        show_save_menu = True
+                        show_options_menu = False
+                        continue
                     continue
 
                 if my >= view_height:
@@ -401,15 +488,18 @@ def run_game(mode, preset):
 
                         if mode == "creative":
                             if selected_block == DELETE:
-                                world[r][c] = GRASS
+                                if 0 <= r < world_rows and 0 <= c < world_cols:
+                                    world[r][c] = GRASS
                             else:
-                                world[r][c] = selected_block
+                                if 0 <= r < world_rows and 0 <= c < world_cols:
+                                    world[r][c] = selected_block
                         else:
                             if pygame.mouse.get_pressed()[2]:
                                 if selected_block != DELETE and inventory.get(selected_block, 0) > 0:
                                     if get_block(r, c) == GRASS or get_block(r, c) == WATER:
-                                        world[r][c] = selected_block
-                                        inventory[selected_block] -= 1
+                                        if 0 <= r < world_rows and 0 <= c < world_cols:
+                                            world[r][c] = selected_block
+                                            inventory[selected_block] -= 1
                             if e.button == 1:
                                 if mineable(bid) and bid != GRASS and bid != WATER:
                                     mine_target = (r, c)
@@ -440,9 +530,10 @@ def run_game(mode, preset):
                         if bid == GRASS:
                             inventory[DIRT] += 1
                         else:
-                            inventory[bid] += 1
+                            inventory[bid] = inventory.get(bid, 0) + 1
 
-                        world[r][c] = GRASS
+                        if 0 <= r < world_rows and 0 <= c < world_cols:
+                            world[r][c] = GRASS
                         mine_progress = 0
                         mining = False
                         mine_target = None
@@ -500,6 +591,7 @@ def run_game(mode, preset):
 
             pygame.draw.rect(screen, (60, 60, 60), quit_rect)
             pygame.draw.rect(screen, (60, 60, 60), grass_rect)
+            pygame.draw.rect(screen, (60, 60, 60), save_rect)
 
             qtxt = font.render("Quit & New Game", True, (255, 255, 255))
             gtxt = font.render(
@@ -507,9 +599,36 @@ def run_game(mode, preset):
                 True,
                 (255, 220, 0) if better_grass_enabled else (200, 200, 200),
             )
+            stxt = font.render("Save / Load", True, (255, 255, 255))
 
             screen.blit(qtxt, qtxt.get_rect(center=quit_rect.center))
             screen.blit(gtxt, gtxt.get_rect(center=grass_rect.center))
+            screen.blit(stxt, stxt.get_rect(center=save_rect.center))
+
+        if show_save_menu:
+            pygame.draw.rect(screen, (25, 25, 25), save_menu_rect, border_radius=10)
+            pygame.draw.rect(screen, (255, 255, 255), save_menu_rect, 2, border_radius=10)
+
+            title = font.render("Save / Load", True, (255, 255, 255))
+            screen.blit(title, title.get_rect(center=(save_menu_rect.centerx, save_menu_rect.y + 25)))
+
+            for i, rect in enumerate(slot_rects):
+                exists = save_exists(i + 1)
+                pygame.draw.rect(screen, (60, 60, 60), rect)
+
+                label = f"Slot {i + 1} : {'Saved' if exists else 'Empty'}"
+                txt = font.render(label, True, (255, 255, 255))
+                screen.blit(txt, txt.get_rect(center=rect.center))
+
+                hint = small_font.render("Left=Load/Save   Right=Overwrite Save", True, (200, 200, 200))
+                screen.blit(hint, (save_menu_rect.x + 40, save_menu_rect.y + 175))
+
+                if rect.collidepoint(mx, my):
+                    pygame.draw.rect(screen, (255, 255, 0), rect, 2)
+
+            pygame.draw.rect(screen, (80, 80, 80), back_rect)
+            btxt = font.render("Back", True, (255, 255, 255))
+            screen.blit(btxt, btxt.get_rect(center=back_rect.center))
 
         draw_toolbar(mode, toolbar_slots, selected_block, inventory, mx, my)
 

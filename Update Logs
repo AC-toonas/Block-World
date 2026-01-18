@@ -117,3 +117,7 @@ Alpha-0.21 tiny update
 Alpha-0.25 
  - added world border
  - added void blocks out of border
+
+Alpha-0.29
+ - added saving
+ - added loading
