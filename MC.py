@@ -91,9 +91,9 @@ grass_dark = tint_image(grass_normal, (120, 180, 120, 255)) if grass_normal else
 def generate_world(preset):
     world = [[GRASS for _ in range(world_cols)] for _ in range(world_rows)]
 
-    def area_is_clear(top, left, height, width):
-        for r in range(top - 1, top + height + 1):
-            for c in range(left - 1, left + width + 1):
+    def area_is_clear(top, left, height, width, pad=1):
+        for r in range(top - pad, top + height + pad):
+            for c in range(left - pad, left + width + pad):
                 if r < 0 or c < 0 or r >= world_rows or c >= world_cols:
                     return False
                 if world[r][c] != GRASS:
@@ -103,33 +103,121 @@ def generate_world(preset):
     if preset == "free":
         return world
 
-    lake_count = 60 if preset == "crowded" else 30
-    tree_count = 250 if preset == "crowded" else 140
+    crowded = (preset == "crowded")
 
+    lake_count = 60 if crowded else 30
+    tree_count = 250 if crowded else 140
+
+    house_count = 55 if crowded else 28
+    rock_vein_count = 150 if crowded else 85
+    big_tree_count = 80 if crowded else 42
+    dirt_patch_count = 220 if crowded else 130
+
+    # ---------- LAKES (FIRST) ----------
     for _ in range(lake_count):
         for _ in range(80):
             size = random.randint(3, 5)
-            row = random.randint(1, world_rows - size - 1)
-            col = random.randint(1, world_cols - size - 1)
-            if area_is_clear(row, col, size, size):
+            row = random.randint(1, world_rows - size - 2)
+            col = random.randint(1, world_cols - size - 2)
+            if area_is_clear(row, col, size, size, pad=2):
                 for r in range(size):
                     for c in range(size):
                         world[row + r][col + c] = WATER
                 break
 
+    # ---------- SMALL TREES ----------
     for _ in range(tree_count):
         for _ in range(120):
             row = random.randint(2, world_rows - 3)
             col = random.randint(2, world_cols - 3)
-            pts = [(row, col), (row - 1, col), (row + 1, col), (row, col - 1), (row, col + 1)]
-            min_r = min(p[0] for p in pts)
-            min_c = min(p[1] for p in pts)
-            if area_is_clear(min_r, min_c, 3, 3):
+            min_r = row - 1
+            min_c = col - 1
+            if area_is_clear(min_r, min_c, 3, 3, pad=2):
                 world[row][col] = WOOD
                 world[row - 1][col] = LEAVES
                 world[row + 1][col] = LEAVES
                 world[row][col - 1] = LEAVES
                 world[row][col + 1] = LEAVES
+                break
+
+    # ---------- HOUSES (2x2 WOOD, 1-TILE BRICK RING) ----------
+    # footprint is 4x4 (brick border), centered wood 2x2
+    for _ in range(house_count):
+        for _ in range(140):
+            r0 = random.randint(2, world_rows - 6)
+            c0 = random.randint(2, world_cols - 6)
+            top = r0
+            left = c0
+            if area_is_clear(top, left, 4, 4, pad=2):
+                for r in range(top, top + 4):
+                    for c in range(left, left + 4):
+                        if (top + 1 <= r <= top + 2) and (left + 1 <= c <= left + 2):
+                            world[r][c] = WOOD
+                        else:
+                            world[r][c] = BRICK
+                break
+
+    # ---------- ROCK VEINS (RANDOM STONE IN 4x4) ----------
+    for _ in range(rock_vein_count):
+        for _ in range(140):
+            top = random.randint(2, world_rows - 6)
+            left = random.randint(2, world_cols - 6)
+            if area_is_clear(top, left, 4, 4, pad=2):
+                n = random.randint(6, 12)
+                cells = [(top + r, left + c) for r in range(4) for c in range(4)]
+                random.shuffle(cells)
+                for i in range(n):
+                    rr, cc = cells[i]
+                    world[rr][cc] = STONE
+                break
+
+    # ---------- BIG TREES (2x2 WOOD + LEAF LAYER + 2x2 LEAF ON EACH SIDE) ----------
+    # footprint is 6x6: rows r-2..r+3, cols c-2..c+3 where (r,c) is trunk top-left
+    for _ in range(big_tree_count):
+        for _ in range(160):
+            r = random.randint(3, world_rows - 5)
+            c = random.randint(3, world_cols - 5)
+            top = r - 2
+            left = c - 2
+            if area_is_clear(top, left, 6, 6, pad=2):
+                for rr in (r, r + 1):
+                    for cc in (c, c + 1):
+                        world[rr][cc] = WOOD
+
+                for rr in range(r - 1, r + 3):
+                    for cc in range(c - 1, c + 3):
+                        if not (r <= rr <= r + 1 and c <= cc <= c + 1):
+                            world[rr][cc] = LEAVES
+
+                for rr in range(r - 2, r):
+                    for cc in range(c, c + 2):
+                        world[rr][cc] = LEAVES
+
+                for rr in range(r + 2, r + 4):
+                    for cc in range(c, c + 2):
+                        world[rr][cc] = LEAVES
+
+                for rr in range(r, r + 2):
+                    for cc in range(c - 2, c):
+                        world[rr][cc] = LEAVES
+
+                for rr in range(r, r + 2):
+                    for cc in range(c + 2, c + 4):
+                        world[rr][cc] = LEAVES
+
+                break
+
+    # ---------- DIRT PATCHES (VARIOUS SIZES) ----------
+    patch_sizes = [(1, 2), (2, 1), (2, 2), (2, 3), (3, 2)]
+    for _ in range(dirt_patch_count):
+        for _ in range(120):
+            h, w = random.choice(patch_sizes)
+            top = random.randint(2, world_rows - h - 3)
+            left = random.randint(2, world_cols - w - 3)
+            if area_is_clear(top, left, h, w, pad=2):
+                for rr in range(top, top + h):
+                    for cc in range(left, left + w):
+                        world[rr][cc] = DIRT
                 break
 
     return world
@@ -288,7 +376,6 @@ def run_game(mode, preset):
     inventory = {bid: 0 for bid in BLOCKS.keys()}
     px = (world_cols * blocksize) // 2
     py = (world_rows * blocksize) // 2
-
 
     selected_block = DELETE if mode == "survival" else GRASS
 
@@ -615,14 +702,13 @@ def run_game(mode, preset):
 
                 if rect.collidepoint(mx, my):
                     pygame.draw.rect(screen, (255, 255, 0), rect, 2)
-            
+
             hint = small_font.render(
                 "Left Click: Load / Save    Right Click: Overwrite Save",
                 True,
                 (200, 200, 200),
             )
             screen.blit(hint, (save_menu_rect.x + 40, save_menu_rect.y + 185))
-
 
             pygame.draw.rect(screen, (80, 80, 80), back_rect)
             btxt = font.render("Back", True, (255, 255, 255))
