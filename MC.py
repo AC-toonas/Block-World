@@ -5,7 +5,7 @@ import math
 import pickle
 
 # ---------- VERSION ----------
-GAME_VERSION = "Alpha-0.25"
+GAME_VERSION = "Alpha-0.5"
 
 # ---------- CONFIG ----------
 blocksize = 32
@@ -24,6 +24,13 @@ world_rows = base_rows * world_multiplier
 player_speed = 4
 PLAYER_SIZE = 32
 HITBOX_SIZE = 24
+
+# ---------- COMBAT ----------
+MAX_HEALTH = 10
+ZOMBIE_SPEED_FACTOR = 0.9
+ZOMBIE_HITS_TO_KILL = 3
+ZOMBIE_SPAWN_CHANCE_PER_DIRT = 0.20
+ZOMBIE_DAMAGE_COOLDOWN = 60
 
 # ---------- OPTIONS ----------
 better_grass_enabled = False
@@ -141,7 +148,6 @@ def generate_world(preset):
                 break
 
     # ---------- HOUSES (2x2 WOOD, 1-TILE BRICK RING) ----------
-    # footprint is 4x4 (brick border), centered wood 2x2
     for _ in range(house_count):
         for _ in range(140):
             r0 = random.randint(2, world_rows - 6)
@@ -171,8 +177,7 @@ def generate_world(preset):
                     world[rr][cc] = STONE
                 break
 
-    # ---------- BIG TREES (2x2 WOOD + LEAF LAYER + 2x2 LEAF ON EACH SIDE) ----------
-    # footprint is 6x6: rows r-2..r+3, cols c-2..c+3 where (r,c) is trunk top-left
+    # ---------- BIG TREES ----------
     for _ in range(big_tree_count):
         for _ in range(160):
             r = random.randint(3, world_rows - 5)
@@ -207,7 +212,7 @@ def generate_world(preset):
 
                 break
 
-    # ---------- DIRT PATCHES (VARIOUS SIZES) ----------
+    # ---------- DIRT PATCHES ----------
     patch_sizes = [(1, 2), (2, 1), (2, 2), (2, 3), (3, 2)]
     for _ in range(dirt_patch_count):
         for _ in range(120):
@@ -376,8 +381,19 @@ def run_game(mode, preset):
     inventory = {bid: 0 for bid in BLOCKS.keys()}
     px = (world_cols * blocksize) // 2
     py = (world_rows * blocksize) // 2
-
     selected_block = DELETE if mode == "survival" else GRASS
+
+    health = MAX_HEALTH
+    damage_timer = 0
+
+    zombies = []
+    if mode == "survival":
+        for r in range(world_rows):
+            for c in range(world_cols):
+                if world[r][c] == DIRT and random.random() < ZOMBIE_SPAWN_CHANCE_PER_DIRT:
+                    zx = c * blocksize + blocksize // 2
+                    zy = r * blocksize + blocksize // 2
+                    zombies.append({"x": float(zx), "y": float(zy), "hp": ZOMBIE_HITS_TO_KILL})
 
     def get_block(r, c):
         if 0 <= r < world_rows and 0 <= c < world_cols:
@@ -420,6 +436,9 @@ def run_game(mode, preset):
         blink_timer += 1
         if blink_timer > blink_interval + blink_duration:
             blink_timer = 0
+
+        if damage_timer > 0:
+            damage_timer -= 1
 
         mx, my = pygame.mouse.get_pos()
 
@@ -470,6 +489,20 @@ def run_game(mode, preset):
             hovered_cell = (r, c)
 
         toolbar_slots = build_toolbar_slots(mode, inventory)
+
+        if mode == "survival" and not show_options_menu and not show_save_menu:
+            for z in zombies:
+                vx = px - z["x"]
+                vy = py - z["y"]
+                dist = math.hypot(vx, vy)
+                if dist > 0:
+                    vx /= dist
+                    vy /= dist
+                    z["x"] += vx * player_speed * ZOMBIE_SPEED_FACTOR
+                    z["y"] += vy * player_speed * ZOMBIE_SPEED_FACTOR
+                if dist < 20 and damage_timer == 0 and health > 0:
+                    health = max(0, health - 1)
+                    damage_timer = ZOMBIE_DAMAGE_COOLDOWN
 
         for e in pygame.event.get():
             if e.type == pygame.QUIT:
@@ -551,6 +584,21 @@ def run_game(mode, preset):
                         show_save_menu = True
                         show_options_menu = False
                         continue
+                    continue
+
+                attacked = False
+                if mode == "survival" and e.button == 1 and my < view_height:
+                    mxw = mx + cam_x
+                    myw = my + cam_y
+                    for z in zombies[:]:
+                        if math.hypot(z["x"] - mxw, z["y"] - myw) < 24:
+                            z["hp"] -= 1
+                            if z["hp"] <= 0:
+                                zombies.remove(z)
+                            attacked = True
+                            break
+
+                if attacked:
                     continue
 
                 if my >= view_height:
@@ -635,6 +683,15 @@ def run_game(mode, preset):
                 if img:
                     screen.blit(img, (c * blocksize - cam_x, r * blocksize - cam_y))
 
+        if mode == "survival":
+            for z in zombies:
+                sx = z["x"] - cam_x
+                sy = z["y"] - cam_y
+                pygame.draw.rect(screen, (40, 180, 40), (sx - 12, sy - 12, 24, 24))
+                pygame.draw.rect(screen, (0, 0, 0), (sx - 12, sy - 18, 24, 4))
+                hpw = int(24 * (z["hp"] / ZOMBIE_HITS_TO_KILL))
+                pygame.draw.rect(screen, (255, 0, 0), (sx - 12, sy - 18, hpw, 4))
+
         if hovered_cell:
             r, c = hovered_cell
             pygame.draw.rect(
@@ -660,6 +717,18 @@ def run_game(mode, preset):
 
         rot = pygame.transform.rotate(base_img, angle)
         screen.blit(rot, rot.get_rect(center=(cx, cy)))
+
+        if mode == "survival":
+            bar_x = 12
+            bar_y = 12
+            bar_w = 140
+            bar_h = 16
+            pygame.draw.rect(screen, (40, 40, 40), (bar_x - 2, bar_y - 2, bar_w + 4, bar_h + 4))
+            pygame.draw.rect(screen, (120, 0, 0), (bar_x, bar_y, bar_w, bar_h))
+            fill = int(bar_w * (health / MAX_HEALTH))
+            pygame.draw.rect(screen, (220, 40, 40), (bar_x, bar_y, fill, bar_h))
+            hp_label = small_font.render("HP", True, (255, 255, 255))
+            screen.blit(hp_label, (bar_x, bar_y - 16))
 
         pygame.draw.rect(screen, (60, 60, 60), options_button_rect, border_radius=6)
         dots = font.render("⋮", True, (255, 255, 255))
@@ -715,7 +784,6 @@ def run_game(mode, preset):
             screen.blit(btxt, btxt.get_rect(center=back_rect.center))
 
         draw_toolbar(mode, toolbar_slots, selected_block, inventory, mx, my)
-
         pygame.display.flip()
 
 # ---------- ENTRY ----------
