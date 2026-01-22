@@ -29,8 +29,14 @@ HITBOX_SIZE = 24
 MAX_HEALTH = 10
 ZOMBIE_SPEED_FACTOR = 0.9
 ZOMBIE_HITS_TO_KILL = 3
-ZOMBIE_SPAWN_CHANCE_PER_DIRT = 0.20
 ZOMBIE_DAMAGE_COOLDOWN = 60
+
+ZOMBIE_SPAWN_CHANCE_DIRT_PATCH = 0.20
+ZOMBIE_SPAWN_CHANCE_HOUSE = 0.10
+ZOMBIE_SPAWN_TICK_FRAMES = 120
+
+MAX_ZOMBIES_NORMAL = 35
+MAX_ZOMBIES_CROWDED = 60
 
 # ---------- OPTIONS ----------
 better_grass_enabled = False
@@ -387,18 +393,134 @@ def run_game(mode, preset):
     damage_timer = 0
 
     zombies = []
-    if mode == "survival":
-        for r in range(world_rows):
-            for c in range(world_cols):
-                if world[r][c] == DIRT and random.random() < ZOMBIE_SPAWN_CHANCE_PER_DIRT:
-                    zx = c * blocksize + blocksize // 2
-                    zy = r * blocksize + blocksize // 2
-                    zombies.append({"x": float(zx), "y": float(zy), "hp": ZOMBIE_HITS_TO_KILL})
+    zombie_spawn_tick = 0
+
+    max_zombies = MAX_ZOMBIES_CROWDED if preset == "crowded" else MAX_ZOMBIES_NORMAL
+    seen_chunks = set()
+    spawned_dirt_patches = set()
+    spawned_houses = set()
 
     def get_block(r, c):
         if 0 <= r < world_rows and 0 <= c < world_cols:
             return world[r][c]
         return 0
+
+    def chunk_of_world_cell(r, c):
+        return (c // base_cols, r // base_rows)
+
+    def loaded_chunks_from_camera(cam_x, cam_y):
+        start_col = int(cam_x // blocksize)
+        start_row = int(cam_y // blocksize)
+        end_col = start_col + base_cols + 3
+        end_row = start_row + base_rows + 3
+
+        start_cc = max(0, start_col // base_cols)
+        end_cc = min(world_cols // base_cols - 1, end_col // base_cols)
+        start_rr = max(0, start_row // base_rows)
+        end_rr = min(world_rows // base_rows - 1, end_row // base_rows)
+
+        out = []
+        for rr in range(start_rr, end_rr + 1):
+            for cc in range(start_cc, end_cc + 1):
+                out.append((cc, rr))
+        return out
+
+    def house_top_left_at(r, c):
+        if r < 0 or c < 0 or r + 3 >= world_rows or c + 3 >= world_cols:
+            return False
+        for rr in range(r, r + 4):
+            for cc in range(c, c + 4):
+                b = get_block(rr, cc)
+                if (r + 1 <= rr <= r + 2) and (c + 1 <= cc <= c + 2):
+                    if b != WOOD:
+                        return False
+                else:
+                    if b != BRICK:
+                        return False
+        return True
+
+    def discover_houses_in_chunk(chunk_c, chunk_r):
+        top = chunk_r * base_rows
+        left = chunk_c * base_cols
+        bottom = min(world_rows - 4, top + base_rows)
+        right = min(world_cols - 4, left + base_cols)
+
+        found = []
+        for r in range(top, bottom + 1):
+            for c in range(left, right + 1):
+                if get_block(r, c) == BRICK:
+                    if house_top_left_at(r, c):
+                        found.append((r, c))
+        return found
+
+    def discover_dirt_patches_in_chunk(chunk_c, chunk_r):
+        top = chunk_r * base_rows
+        left = chunk_c * base_cols
+        bottom = min(world_rows - 1, top + base_rows - 1)
+        right = min(world_cols - 1, left + base_cols - 1)
+
+        visited = set()
+        patches = []
+
+        def flood(sr, sc):
+            stack = [(sr, sc)]
+            cells = []
+            visited.add((sr, sc))
+            while stack:
+                r, c = stack.pop()
+                cells.append((r, c))
+                for dr, dc in [(-1,0),(1,0),(0,-1),(0,1)]:
+                    nr, nc = r + dr, c + dc
+                    if 0 <= nr < world_rows and 0 <= nc < world_cols:
+                        if (nr, nc) not in visited and get_block(nr, nc) == DIRT:
+                            visited.add((nr, nc))
+                            stack.append((nr, nc))
+            return cells
+
+        for r in range(top, bottom + 1):
+            for c in range(left, right + 1):
+                if get_block(r, c) == DIRT and (r, c) not in visited:
+                    cells = flood(r, c)
+                    mr = min(x[0] for x in cells)
+                    mc = min(x[1] for x in cells)
+                    patch_id = (mr, mc)
+                    patches.append((patch_id, cells))
+
+        return patches
+
+    def try_spawn_in_chunk(chunk_c, chunk_r):
+        if mode != "survival":
+            return
+        if len(zombies) >= max_zombies:
+            return
+
+        patches = discover_dirt_patches_in_chunk(chunk_c, chunk_r)
+        random.shuffle(patches)
+        for patch_id, cells in patches:
+            if len(zombies) >= max_zombies:
+                break
+            if patch_id in spawned_dirt_patches:
+                continue
+            if random.random() <= ZOMBIE_SPAWN_CHANCE_DIRT_PATCH:
+                sr, sc = random.choice(cells)
+                zx = sc * blocksize + blocksize // 2
+                zy = sr * blocksize + blocksize // 2
+                zombies.append({"x": float(zx), "y": float(zy), "hp": ZOMBIE_HITS_TO_KILL})
+                spawned_dirt_patches.add(patch_id)
+
+        houses = discover_houses_in_chunk(chunk_c, chunk_r)
+        random.shuffle(houses)
+        for hr, hc in houses:
+            if len(zombies) >= max_zombies:
+                break
+            house_id = (hr, hc)
+            if house_id in spawned_houses:
+                continue
+            if random.random() <= ZOMBIE_SPAWN_CHANCE_HOUSE:
+                sx = (hc + 2) * blocksize + blocksize // 2
+                sy = (hr - 1) * blocksize + blocksize // 2
+                zombies.append({"x": float(sx), "y": float(sy), "hp": ZOMBIE_HITS_TO_KILL})
+                spawned_houses.add(house_id)
 
     blink_timer = 0
     blink_interval = 180
@@ -476,6 +598,23 @@ def run_game(mode, preset):
         cam_y = py - view_height // 2
         cam_x = max(-screen_width // 2, min(cam_x, world_px_w - screen_width // 2))
         cam_y = max(-view_height // 2, min(cam_y, world_px_h - view_height // 2))
+
+        loaded = loaded_chunks_from_camera(cam_x, cam_y)
+        for ch in loaded:
+            if ch not in seen_chunks:
+                seen_chunks.add(ch)
+                try_spawn_in_chunk(ch[0], ch[1])
+
+        zombie_spawn_tick += 1
+        if mode == "survival" and zombie_spawn_tick >= ZOMBIE_SPAWN_TICK_FRAMES:
+            zombie_spawn_tick = 0
+            if not show_options_menu and not show_save_menu:
+                if len(zombies) < max_zombies:
+                    random.shuffle(loaded)
+                    for ch in loaded[:2]:
+                        try_spawn_in_chunk(ch[0], ch[1])
+                        if len(zombies) >= max_zombies:
+                            break
 
         cx = screen_width // 2
         cy = view_height // 2
@@ -600,7 +739,6 @@ def run_game(mode, preset):
 
                 if attacked:
                     continue
-
                 if my >= view_height:
                     for rect, bid in toolbar_slots:
                         if rect.collidepoint(mx, my):
