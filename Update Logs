@@ -141,3 +141,6 @@ Alpha-0.51 zombie fix #1
  - slowed down zombie spawn
  - zombies now only spawn in loaded chunks
 
+Alpha-0.55 zombie fix final
+ - fixed everything about zombies except that pathfind
+

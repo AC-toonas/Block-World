@@ -3,6 +3,7 @@ import os
 import random
 import math
 import pickle
+from collections import deque
 
 # ---------- VERSION ----------
 GAME_VERSION = "Alpha-0.5"
@@ -27,16 +28,24 @@ HITBOX_SIZE = 24
 
 # ---------- COMBAT ----------
 MAX_HEALTH = 10
-ZOMBIE_SPEED_FACTOR = 0.9
+ZOMBIE_SPEED_FACTOR = 0.75
 ZOMBIE_HITS_TO_KILL = 3
 ZOMBIE_DAMAGE_COOLDOWN = 60
+ZOMBIE_HITBOX = 20
 
-ZOMBIE_SPAWN_CHANCE_DIRT_PATCH = 0.20
-ZOMBIE_SPAWN_CHANCE_HOUSE = 0.10
-ZOMBIE_SPAWN_TICK_FRAMES = 120
+# Spawn rules (Option B requested earlier):
+ZOMBIE_SPAWN_CHANCE_PER_DIRT_PATCH = 0.20  # 20% per dirt patch (1 zombie max per patch)
+ZOMBIE_SPAWN_CHANCE_PER_HOUSE = 0.10       # 10% per house (1 zombie max per house)
+MAX_ZOMBIES_TOTAL = 35                      # global cap so "not too much zombie"
 
-MAX_ZOMBIES_NORMAL = 35
-MAX_ZOMBIES_CROWDED = 60
+# ---------- ZOMBIE PATHFINDING ----------
+PATH_RADIUS_TILES = 28
+PATH_UPDATE_FRAMES = 8
+
+# "Loaded / already seen chunks"
+CHUNK_SIZE_TILES = 16
+CHUNK_VISIBILITY_MARGIN_TILES = 2  # small extra to count as "seen"
+SPAWN_CHECK_FRAMES = 20            # how often to attempt spawning in newly seen chunks
 
 # ---------- OPTIONS ----------
 better_grass_enabled = False
@@ -85,9 +94,7 @@ for bid, name in BLOCKS.items():
 
 player_img = pygame.image.load(os.path.join(BASE_DIR, "player.png")).convert_alpha()
 player_img = pygame.transform.scale(player_img, (32, 32))
-player_eyeclosed_img = pygame.image.load(
-    os.path.join(BASE_DIR, "player-eyeclosed.png")
-).convert_alpha()
+player_eyeclosed_img = pygame.image.load(os.path.join(BASE_DIR, "player-eyeclosed.png")).convert_alpha()
 player_eyeclosed_img = pygame.transform.scale(player_eyeclosed_img, (32, 32))
 
 def tint_image(img, tint):
@@ -126,7 +133,7 @@ def generate_world(preset):
     big_tree_count = 80 if crowded else 42
     dirt_patch_count = 220 if crowded else 130
 
-    # ---------- LAKES (FIRST) ----------
+    # lakes
     for _ in range(lake_count):
         for _ in range(80):
             size = random.randint(3, 5)
@@ -138,7 +145,7 @@ def generate_world(preset):
                         world[row + r][col + c] = WATER
                 break
 
-    # ---------- SMALL TREES ----------
+    # small trees
     for _ in range(tree_count):
         for _ in range(120):
             row = random.randint(2, world_rows - 3)
@@ -153,7 +160,7 @@ def generate_world(preset):
                 world[row][col + 1] = LEAVES
                 break
 
-    # ---------- HOUSES (2x2 WOOD, 1-TILE BRICK RING) ----------
+    # houses (4x4)
     for _ in range(house_count):
         for _ in range(140):
             r0 = random.randint(2, world_rows - 6)
@@ -169,7 +176,7 @@ def generate_world(preset):
                             world[r][c] = BRICK
                 break
 
-    # ---------- ROCK VEINS (RANDOM STONE IN 4x4) ----------
+    # rock veins
     for _ in range(rock_vein_count):
         for _ in range(140):
             top = random.randint(2, world_rows - 6)
@@ -183,7 +190,7 @@ def generate_world(preset):
                     world[rr][cc] = STONE
                 break
 
-    # ---------- BIG TREES ----------
+    # big trees
     for _ in range(big_tree_count):
         for _ in range(160):
             r = random.randint(3, world_rows - 5)
@@ -215,10 +222,9 @@ def generate_world(preset):
                 for rr in range(r, r + 2):
                     for cc in range(c + 2, c + 4):
                         world[rr][cc] = LEAVES
-
                 break
 
-    # ---------- DIRT PATCHES ----------
+    # dirt patches
     patch_sizes = [(1, 2), (2, 1), (2, 2), (2, 3), (3, 2)]
     for _ in range(dirt_patch_count):
         for _ in range(120):
@@ -392,140 +398,235 @@ def run_game(mode, preset):
     health = MAX_HEALTH
     damage_timer = 0
 
-    zombies = []
-    zombie_spawn_tick = 0
-
-    max_zombies = MAX_ZOMBIES_CROWDED if preset == "crowded" else MAX_ZOMBIES_NORMAL
-    seen_chunks = set()
-    spawned_dirt_patches = set()
-    spawned_houses = set()
-
     def get_block(r, c):
         if 0 <= r < world_rows and 0 <= c < world_cols:
             return world[r][c]
         return 0
 
-    def chunk_of_world_cell(r, c):
-        return (c // base_cols, r // base_rows)
+    def solid_at(px_, py_):
+        c = int(px_ // blocksize)
+        r = int(py_ // blocksize)
+        bid = get_block(r, c)
+        return bid == 0 or (bid in SOLID_BLOCKS)
 
-    def loaded_chunks_from_camera(cam_x, cam_y):
-        start_col = int(cam_x // blocksize)
-        start_row = int(cam_y // blocksize)
-        end_col = start_col + base_cols + 3
-        end_row = start_row + base_rows + 3
+    def zombie_solid_at(x, y):
+        h = ZOMBIE_HITBOX // 2 - 1
+        for ox, oy in [(-h, -h), (h, -h), (-h, h), (h, h)]:
+            if solid_at(x + ox, y + oy):
+                return True
+        return False
 
-        start_cc = max(0, start_col // base_cols)
-        end_cc = min(world_cols // base_cols - 1, end_col // base_cols)
-        start_rr = max(0, start_row // base_rows)
-        end_rr = min(world_rows // base_rows - 1, end_row // base_rows)
+    def mineable(bid):
+        return bid in {GRASS, DIRT, WOOD, LEAVES}
 
-        out = []
-        for rr in range(start_rr, end_rr + 1):
-            for cc in range(start_cc, end_cc + 1):
-                out.append((cc, rr))
-        return out
-
-    def house_top_left_at(r, c):
-        if r < 0 or c < 0 or r + 3 >= world_rows or c + 3 >= world_cols:
-            return False
-        for rr in range(r, r + 4):
-            for cc in range(c, c + 4):
-                b = get_block(rr, cc)
-                if (r + 1 <= rr <= r + 2) and (c + 1 <= cc <= c + 2):
-                    if b != WOOD:
-                        return False
-                else:
-                    if b != BRICK:
-                        return False
-        return True
-
-    def discover_houses_in_chunk(chunk_c, chunk_r):
-        top = chunk_r * base_rows
-        left = chunk_c * base_cols
-        bottom = min(world_rows - 4, top + base_rows)
-        right = min(world_cols - 4, left + base_cols)
-
-        found = []
-        for r in range(top, bottom + 1):
-            for c in range(left, right + 1):
-                if get_block(r, c) == BRICK:
-                    if house_top_left_at(r, c):
-                        found.append((r, c))
-        return found
-
-    def discover_dirt_patches_in_chunk(chunk_c, chunk_r):
-        top = chunk_r * base_rows
-        left = chunk_c * base_cols
-        bottom = min(world_rows - 1, top + base_rows - 1)
-        right = min(world_cols - 1, left + base_cols - 1)
-
-        visited = set()
+    # ---------- Find structures for spawn (dirt patches + houses) ----------
+    # We group connected dirt blocks into patches; houses are detected by BRICK ring (4x4) with WOOD 2x2 inside.
+    def find_dirt_patches():
+        seen = set()
         patches = []
-
-        def flood(sr, sc):
-            stack = [(sr, sc)]
-            cells = []
-            visited.add((sr, sc))
-            while stack:
-                r, c = stack.pop()
-                cells.append((r, c))
-                for dr, dc in [(-1,0),(1,0),(0,-1),(0,1)]:
-                    nr, nc = r + dr, c + dc
-                    if 0 <= nr < world_rows and 0 <= nc < world_cols:
-                        if (nr, nc) not in visited and get_block(nr, nc) == DIRT:
-                            visited.add((nr, nc))
-                            stack.append((nr, nc))
-            return cells
-
-        for r in range(top, bottom + 1):
-            for c in range(left, right + 1):
-                if get_block(r, c) == DIRT and (r, c) not in visited:
-                    cells = flood(r, c)
-                    mr = min(x[0] for x in cells)
-                    mc = min(x[1] for x in cells)
-                    patch_id = (mr, mc)
-                    patches.append((patch_id, cells))
-
+        for r in range(world_rows):
+            for c in range(world_cols):
+                if world[r][c] != DIRT or (r, c) in seen:
+                    continue
+                q = deque([(r, c)])
+                seen.add((r, c))
+                cells = []
+                while q:
+                    rr, cc = q.popleft()
+                    cells.append((rr, cc))
+                    for dr, dc in ((-1,0),(1,0),(0,-1),(0,1)):
+                        r2 = rr + dr
+                        c2 = cc + dc
+                        if 0 <= r2 < world_rows and 0 <= c2 < world_cols and world[r2][c2] == DIRT and (r2, c2) not in seen:
+                            seen.add((r2, c2))
+                            q.append((r2, c2))
+                if cells:
+                    patches.append(cells)
         return patches
 
-    def try_spawn_in_chunk(chunk_c, chunk_r):
-        if mode != "survival":
-            return
-        if len(zombies) >= max_zombies:
-            return
+    def find_houses():
+        houses = []
+        for r in range(0, world_rows - 3):
+            for c in range(0, world_cols - 3):
+                ok = True
+                for rr in range(r, r + 4):
+                    for cc in range(c, c + 4):
+                        inside = (r + 1 <= rr <= r + 2) and (c + 1 <= cc <= c + 2)
+                        if inside:
+                            if world[rr][cc] != WOOD:
+                                ok = False
+                                break
+                        else:
+                            if world[rr][cc] != BRICK:
+                                ok = False
+                                break
+                    if not ok:
+                        break
+                if ok:
+                    houses.append((r, c))  # top-left of 4x4
+        return houses
 
-        patches = discover_dirt_patches_in_chunk(chunk_c, chunk_r)
-        random.shuffle(patches)
-        for patch_id, cells in patches:
-            if len(zombies) >= max_zombies:
-                break
-            if patch_id in spawned_dirt_patches:
+    dirt_patches = find_dirt_patches()
+    houses = find_houses()
+
+    # For each spawn-source, pick ONE spawn cell (center-ish)
+    patch_spawn_cells = []
+    for cells in dirt_patches:
+        # choose median-ish to be stable
+        rs = sorted([p[0] for p in cells])
+        cs = sorted([p[1] for p in cells])
+        cr = rs[len(rs)//2]
+        cc = cs[len(cs)//2]
+        patch_spawn_cells.append((cr, cc))
+
+    house_spawn_cells = []
+    for (r, c) in houses:
+        # outside the house ring is brick; spawn just outside if possible, otherwise inside center
+        candidates = [
+            (r - 1, c + 1), (r - 1, c + 2),
+            (r + 4, c + 1), (r + 4, c + 2),
+            (r + 1, c - 1), (r + 2, c - 1),
+            (r + 1, c + 4), (r + 2, c + 4),
+        ]
+        chosen = None
+        for rr, cc in candidates:
+            if 0 <= rr < world_rows and 0 <= cc < world_cols:
+                bid = get_block(rr, cc)
+                if bid != 0 and bid not in SOLID_BLOCKS:
+                    chosen = (rr, cc)
+                    break
+        if chosen is None:
+            chosen = (r + 1, c + 1)  # fallback
+        house_spawn_cells.append(chosen)
+
+    # Track spawn sources so: "only one zombie per patch/house" and "only in seen chunks"
+    dirt_spawned = set()   # indices into patch_spawn_cells
+    house_spawned = set()  # indices into house_spawn_cells
+
+    # ---------- Seen chunks ----------
+    seen_chunks = set()
+    processed_chunks_for_spawns = set()
+
+    def tile_to_chunk(tr, tc):
+        return (tr // CHUNK_SIZE_TILES, tc // CHUNK_SIZE_TILES)
+
+    def mark_seen_chunks(cam_x, cam_y):
+        start_col = int(cam_x // blocksize) - CHUNK_VISIBILITY_MARGIN_TILES
+        start_row = int(cam_y // blocksize) - CHUNK_VISIBILITY_MARGIN_TILES
+        end_col = start_col + base_cols + 3 + CHUNK_VISIBILITY_MARGIN_TILES * 2
+        end_row = start_row + base_rows + 3 + CHUNK_VISIBILITY_MARGIN_TILES * 2
+        start_col = max(0, start_col)
+        start_row = max(0, start_row)
+        end_col = min(world_cols - 1, end_col)
+        end_row = min(world_rows - 1, end_row)
+
+        c0 = start_col // CHUNK_SIZE_TILES
+        c1 = end_col // CHUNK_SIZE_TILES
+        r0 = start_row // CHUNK_SIZE_TILES
+        r1 = end_row // CHUNK_SIZE_TILES
+
+        for cr in range(r0, r1 + 1):
+            for cc in range(c0, c1 + 1):
+                seen_chunks.add((cr, cc))
+
+    def in_seen_chunk(tr, tc):
+        return tile_to_chunk(tr, tc) in seen_chunks
+
+    # ---------- Zombies ----------
+    zombies = []
+
+    # Each zombie remembers where it came from, so we don’t respawn it again for that source.
+    def spawn_zombie_at_tile(tr, tc, source_type, source_id):
+        if len(zombies) >= MAX_ZOMBIES_TOTAL:
+            return False
+        # must be walkable
+        bid = get_block(tr, tc)
+        if bid == 0 or bid in SOLID_BLOCKS:
+            return False
+        zx = tc * blocksize + blocksize / 2
+        zy = tr * blocksize + blocksize / 2
+        if zombie_solid_at(zx, zy):
+            return False
+        zombies.append({"x": float(zx), "y": float(zy), "hp": ZOMBIE_HITS_TO_KILL,
+                        "src": (source_type, source_id)})
+        return True
+
+    # Spawn attempts happen ONLY when a chunk is first seen.
+    def process_newly_seen_chunks_for_spawns():
+        # dirt patches
+        for i, (tr, tc) in enumerate(patch_spawn_cells):
+            if i in dirt_spawned:
                 continue
-            if random.random() <= ZOMBIE_SPAWN_CHANCE_DIRT_PATCH:
-                sr, sc = random.choice(cells)
-                zx = sc * blocksize + blocksize // 2
-                zy = sr * blocksize + blocksize // 2
-                zombies.append({"x": float(zx), "y": float(zy), "hp": ZOMBIE_HITS_TO_KILL})
-                spawned_dirt_patches.add(patch_id)
-
-        houses = discover_houses_in_chunk(chunk_c, chunk_r)
-        random.shuffle(houses)
-        for hr, hc in houses:
-            if len(zombies) >= max_zombies:
-                break
-            house_id = (hr, hc)
-            if house_id in spawned_houses:
+            if not in_seen_chunk(tr, tc):
                 continue
-            if random.random() <= ZOMBIE_SPAWN_CHANCE_HOUSE:
-                sx = (hc + 2) * blocksize + blocksize // 2
-                sy = (hr - 1) * blocksize + blocksize // 2
-                zombies.append({"x": float(sx), "y": float(sy), "hp": ZOMBIE_HITS_TO_KILL})
-                spawned_houses.add(house_id)
+            # one zombie per patch, 20% chance
+            if random.random() < ZOMBIE_SPAWN_CHANCE_PER_DIRT_PATCH:
+                if spawn_zombie_at_tile(tr, tc, "dirt", i):
+                    dirt_spawned.add(i)
+            else:
+                # even if not spawned, lock it so it doesn't keep trying forever after seen
+                dirt_spawned.add(i)
 
+        # houses
+        for i, (tr, tc) in enumerate(house_spawn_cells):
+            if i in house_spawned:
+                continue
+            if not in_seen_chunk(tr, tc):
+                continue
+            if random.random() < ZOMBIE_SPAWN_CHANCE_PER_HOUSE:
+                if spawn_zombie_at_tile(tr, tc, "house", i):
+                    house_spawned.add(i)
+            else:
+                house_spawned.add(i)
+
+    # ---------- Zombie pathfinding map (flow field) ----------
+    frame = 0
+    dist_map = {}
+
+    def rebuild_dist_map():
+        nonlocal dist_map
+        pr = int(py // blocksize)
+        pc = int(px // blocksize)
+
+        top = max(0, pr - PATH_RADIUS_TILES)
+        bot = min(world_rows - 1, pr + PATH_RADIUS_TILES)
+        left = max(0, pc - PATH_RADIUS_TILES)
+        right = min(world_cols - 1, pc + PATH_RADIUS_TILES)
+
+        if get_block(pr, pc) == 0:
+            dist_map = {}
+            return
+
+        q = deque()
+        d = {}
+        q.append((pr, pc))
+        d[(pr, pc)] = 0
+
+        while q:
+            r, c = q.popleft()
+            base = d[(r, c)]
+            if base >= PATH_RADIUS_TILES * 2:
+                continue
+
+            for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                rr = r + dr
+                cc = c + dc
+                if rr < top or rr > bot or cc < left or cc > right:
+                    continue
+                if (rr, cc) in d:
+                    continue
+                bid = get_block(rr, cc)
+                if bid == 0 or bid in SOLID_BLOCKS:
+                    continue
+                d[(rr, cc)] = base + 1
+                q.append((rr, cc))
+
+        dist_map = d
+
+    # ---------- Player visuals / mining ----------
     blink_timer = 0
     blink_interval = 180
     blink_duration = 8
-
     angle = 0
 
     mine_target = None
@@ -533,6 +634,7 @@ def run_game(mode, preset):
     mining = False
     MINE_TIME = 45
 
+    # ---------- UI rectangles ----------
     options_button_rect = pygame.Rect(screen_width - 36, 8, 28, 28)
     menu_rect = pygame.Rect(screen_width - 220, 40, 200, 130)
     quit_rect = pygame.Rect(menu_rect.x + 10, menu_rect.y + 10, 180, 30)
@@ -543,18 +645,11 @@ def run_game(mode, preset):
     slot_rects = [pygame.Rect(save_menu_rect.x + 40, save_menu_rect.y + 60 + i * 50, 280, 40) for i in range(3)]
     back_rect = pygame.Rect(save_menu_rect.x + 100, save_menu_rect.y + 210, 160, 36)
 
-    def solid_at(px_, py_):
-        c = int(px_ // blocksize)
-        r = int(py_ // blocksize)
-        bid = get_block(r, c)
-        return bid == 0 or (bid in SOLID_BLOCKS)
-
-    def mineable(bid):
-        return bid in {GRASS, DIRT, WOOD, LEAVES}
-
     running = True
     while running:
         clock.tick(60)
+        frame += 1
+
         blink_timer += 1
         if blink_timer > blink_interval + blink_duration:
             blink_timer = 0
@@ -564,6 +659,7 @@ def run_game(mode, preset):
 
         mx, my = pygame.mouse.get_pos()
 
+        # movement
         dx = dy = 0
         keys = pygame.key.get_pressed()
         if keys[pygame.K_w] or keys[pygame.K_UP]:
@@ -594,28 +690,18 @@ def run_game(mode, preset):
         px = max(0, min(px, world_px_w - 1))
         py = max(0, min(py, world_px_h - 1))
 
+        # camera
         cam_x = px - screen_width // 2
         cam_y = py - view_height // 2
         cam_x = max(-screen_width // 2, min(cam_x, world_px_w - screen_width // 2))
         cam_y = max(-view_height // 2, min(cam_y, world_px_h - view_height // 2))
 
-        loaded = loaded_chunks_from_camera(cam_x, cam_y)
-        for ch in loaded:
-            if ch not in seen_chunks:
-                seen_chunks.add(ch)
-                try_spawn_in_chunk(ch[0], ch[1])
+        # mark seen chunks & process spawns (Option B)
+        mark_seen_chunks(cam_x, cam_y)
+        if mode == "survival" and frame % SPAWN_CHECK_FRAMES == 0:
+            process_newly_seen_chunks_for_spawns()
 
-        zombie_spawn_tick += 1
-        if mode == "survival" and zombie_spawn_tick >= ZOMBIE_SPAWN_TICK_FRAMES:
-            zombie_spawn_tick = 0
-            if not show_options_menu and not show_save_menu:
-                if len(zombies) < max_zombies:
-                    random.shuffle(loaded)
-                    for ch in loaded[:2]:
-                        try_spawn_in_chunk(ch[0], ch[1])
-                        if len(zombies) >= max_zombies:
-                            break
-
+        # aim angle
         cx = screen_width // 2
         cy = view_height // 2
         if mx != cx or my != cy:
@@ -629,20 +715,63 @@ def run_game(mode, preset):
 
         toolbar_slots = build_toolbar_slots(mode, inventory)
 
+        # zombies update
         if mode == "survival" and not show_options_menu and not show_save_menu:
+            if frame % PATH_UPDATE_FRAMES == 0:
+                rebuild_dist_map()
+
+            z_speed = player_speed * ZOMBIE_SPEED_FACTOR
+
             for z in zombies:
+                zr = int(z["y"] // blocksize)
+                zc = int(z["x"] // blocksize)
+
                 vx = px - z["x"]
                 vy = py - z["y"]
                 dist = math.hypot(vx, vy)
+
                 if dist > 0:
                     vx /= dist
                     vy /= dist
-                    z["x"] += vx * player_speed * ZOMBIE_SPEED_FACTOR
-                    z["y"] += vy * player_speed * ZOMBIE_SPEED_FACTOR
+
+                # pathfinding: follow the dist_map gradient (can't go through walls)
+                if dist_map:
+                    key = (zr, zc)
+                    if key in dist_map:
+                        best = dist_map[key]
+                        best_cell = None
+                        for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                            rr = zr + dr
+                            cc = zc + dc
+                            if (rr, cc) in dist_map and dist_map[(rr, cc)] < best:
+                                best = dist_map[(rr, cc)]
+                                best_cell = (rr, cc)
+
+                        if best_cell is not None:
+                            tx = best_cell[1] * blocksize + blocksize / 2
+                            ty = best_cell[0] * blocksize + blocksize / 2
+                            mvx = tx - z["x"]
+                            mvy = ty - z["y"]
+                            md = math.hypot(mvx, mvy)
+                            if md > 0:
+                                vx = mvx / md
+                                vy = mvy / md
+
+                # movement with collision
+                nxz = z["x"] + vx * z_speed
+                nyz = z["y"] + vy * z_speed
+
+                if not zombie_solid_at(nxz, z["y"]):
+                    z["x"] = nxz
+                if not zombie_solid_at(z["x"], nyz):
+                    z["y"] = nyz
+
+                # attack
                 if dist < 20 and damage_timer == 0 and health > 0:
                     health = max(0, health - 1)
                     damage_timer = ZOMBIE_DAMAGE_COOLDOWN
 
+        # events
         for e in pygame.event.get():
             if e.type == pygame.QUIT:
                 running = False
@@ -680,6 +809,11 @@ def run_game(mode, preset):
                                 "mode": mode,
                                 "preset": preset,
                                 "version": GAME_VERSION,
+                                "health": health,
+                                "zombies": zombies,
+                                "dirt_spawned": dirt_spawned,
+                                "house_spawned": house_spawned,
+                                "seen_chunks": seen_chunks,
                             })
                         else:
                             if save_exists(clicked_slot):
@@ -690,7 +824,13 @@ def run_game(mode, preset):
                                     py = data.get("py", py)
                                     inventory = data.get("inventory", inventory)
                                     better_grass_enabled = data.get("better_grass", better_grass_enabled)
+                                    health = data.get("health", health)
+                                    zombies = data.get("zombies", zombies)
+                                    dirt_spawned = set(data.get("dirt_spawned", list(dirt_spawned)))
+                                    house_spawned = set(data.get("house_spawned", list(house_spawned)))
+                                    seen_chunks = set(data.get("seen_chunks", list(seen_chunks)))
                                     selected_block = DELETE if mode == "survival" else GRASS
+                                    dist_map = {}
                             else:
                                 save_game(clicked_slot, {
                                     "world": world,
@@ -701,6 +841,11 @@ def run_game(mode, preset):
                                     "mode": mode,
                                     "preset": preset,
                                     "version": GAME_VERSION,
+                                    "health": health,
+                                    "zombies": zombies,
+                                    "dirt_spawned": dirt_spawned,
+                                    "house_spawned": house_spawned,
+                                    "seen_chunks": seen_chunks,
                                 })
                         show_save_menu = False
                         continue
@@ -739,6 +884,7 @@ def run_game(mode, preset):
 
                 if attacked:
                     continue
+
                 if my >= view_height:
                     for rect, bid in toolbar_slots:
                         if rect.collidepoint(mx, my):
@@ -748,7 +894,6 @@ def run_game(mode, preset):
                     if hovered_cell:
                         r, c = hovered_cell
                         bid = get_block(r, c)
-
                         if bid == 0:
                             continue
 
@@ -778,6 +923,7 @@ def run_game(mode, preset):
                     mine_target = None
                     mine_progress = 0
 
+        # mining logic
         if mode == "survival" and mining and mine_target and pygame.mouse.get_pressed()[0]:
             r, c = mine_target
             if hovered_cell != mine_target:
@@ -793,17 +939,14 @@ def run_game(mode, preset):
                 else:
                     mine_progress += 1
                     if mine_progress >= MINE_TIME:
-                        if bid == GRASS:
-                            inventory[DIRT] += 1
-                        else:
-                            inventory[bid] = inventory.get(bid, 0) + 1
-
+                        inventory[bid] = inventory.get(bid, 0) + 1
                         if 0 <= r < world_rows and 0 <= c < world_cols:
                             world[r][c] = GRASS
                         mine_progress = 0
                         mining = False
                         mine_target = None
 
+        # render bounds
         start_col = int(cam_x // blocksize)
         start_row = int(cam_y // blocksize)
         end_col = start_col + base_cols + 3
@@ -811,6 +954,7 @@ def run_game(mode, preset):
 
         screen.fill((0, 0, 0))
 
+        # draw world
         for r in range(start_row, end_row):
             for c in range(start_col, end_col):
                 bid = get_block(r, c)
@@ -821,6 +965,7 @@ def run_game(mode, preset):
                 if img:
                     screen.blit(img, (c * blocksize - cam_x, r * blocksize - cam_y))
 
+        # draw zombies
         if mode == "survival":
             for z in zombies:
                 sx = z["x"] - cam_x
@@ -830,6 +975,7 @@ def run_game(mode, preset):
                 hpw = int(24 * (z["hp"] / ZOMBIE_HITS_TO_KILL))
                 pygame.draw.rect(screen, (255, 0, 0), (sx - 12, sy - 18, hpw, 4))
 
+        # highlight hovered block
         if hovered_cell:
             r, c = hovered_cell
             pygame.draw.rect(
@@ -839,6 +985,7 @@ def run_game(mode, preset):
                 2,
             )
 
+        # mining bar
         if mode == "survival" and mining:
             bar_w = 220
             bar_h = 16
@@ -848,14 +995,15 @@ def run_game(mode, preset):
             fill = int(bar_w * (mine_progress / MINE_TIME))
             pygame.draw.rect(screen, (255, 220, 0), (x, y, fill, bar_h))
 
+        # player sprite
         if blink_interval <= blink_timer < blink_interval + blink_duration:
             base_img = player_eyeclosed_img
         else:
             base_img = player_img
-
         rot = pygame.transform.rotate(base_img, angle)
         screen.blit(rot, rot.get_rect(center=(cx, cy)))
 
+        # health bar (top-left)
         if mode == "survival":
             bar_x = 12
             bar_y = 12
@@ -868,10 +1016,12 @@ def run_game(mode, preset):
             hp_label = small_font.render("HP", True, (255, 255, 255))
             screen.blit(hp_label, (bar_x, bar_y - 16))
 
+        # options button
         pygame.draw.rect(screen, (60, 60, 60), options_button_rect, border_radius=6)
         dots = font.render("⋮", True, (255, 255, 255))
         screen.blit(dots, dots.get_rect(center=options_button_rect.center))
 
+        # options menu
         if show_options_menu:
             pygame.draw.rect(screen, (30, 30, 30), menu_rect, border_radius=8)
             pygame.draw.rect(screen, (255, 255, 255), menu_rect, 2, border_radius=8)
@@ -892,6 +1042,7 @@ def run_game(mode, preset):
             screen.blit(gtxt, gtxt.get_rect(center=grass_rect.center))
             screen.blit(stxt, stxt.get_rect(center=save_rect.center))
 
+        # save menu
         if show_save_menu:
             pygame.draw.rect(screen, (25, 25, 25), save_menu_rect, border_radius=10)
             pygame.draw.rect(screen, (255, 255, 255), save_menu_rect, 2, border_radius=10)
@@ -921,7 +1072,9 @@ def run_game(mode, preset):
             btxt = font.render("Back", True, (255, 255, 255))
             screen.blit(btxt, btxt.get_rect(center=back_rect.center))
 
+        # toolbar
         draw_toolbar(mode, toolbar_slots, selected_block, inventory, mx, my)
+
         pygame.display.flip()
 
 # ---------- ENTRY ----------
