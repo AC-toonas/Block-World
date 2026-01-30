@@ -144,3 +144,10 @@ Alpha-0.51 zombie fix #1
 Alpha-0.55 zombie fix final
  - fixed everything about zombies except that pathfind
 
+Alpha-0.6 hard mode
+ - added hard mode
+ - added hard mode selection
+ - menu highlights needs fix
+ - pathfinding different on modes
+  - hard mode: diagonal pathfind
+  - normal mode: un-greedy pathfind (player move x move y first vice versa)
