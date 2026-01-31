@@ -1,3 +1,7 @@
+# ================================
+# Block World - Alpha 0.6 (Full)
+# Part 1/3
+# ================================
 import pygame
 import os
 import random
@@ -60,11 +64,17 @@ PATH_RADIUS_TILES = 28
 PATH_UPDATE_FRAMES = 8
 
 # ==========================================================
+# ---------------- PASSIVE HEAL -----------------------------
+# ==========================================================
+# Heals when NOT taking damage recently, and not paused.
+HEAL_DELAY_FRAMES = 60 * 4      # must be safe for 4 seconds after being hit
+HEAL_TICK_FRAMES = 60 * 2       # then heal 1 every 2 seconds
+HEAL_AMOUNT = 1.0
+
+# ==========================================================
 # -------------------- OPTIONS ------------------------------
 # ==========================================================
 better_grass_enabled = False
-show_options_menu = False
-show_save_menu = False
 
 # ==========================================================
 # ---------------- BLOCK DEFINITIONS ------------------------
@@ -102,6 +112,9 @@ clock = pygame.time.Clock()
 
 font = pygame.font.SysFont(None, 24)
 small_font = pygame.font.SysFont(None, 18)
+title_font = pygame.font.SysFont(None, 64)
+button_font = pygame.font.SysFont(None, 36)
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # ==========================================================
@@ -117,9 +130,7 @@ for bid, name in BLOCKS.items():
 player_img = pygame.image.load(os.path.join(BASE_DIR, "player.png")).convert_alpha()
 player_img = pygame.transform.scale(player_img, (32, 32))
 
-player_eyeclosed_img = pygame.image.load(
-    os.path.join(BASE_DIR, "player-eyeclosed.png")
-).convert_alpha()
+player_eyeclosed_img = pygame.image.load(os.path.join(BASE_DIR, "player-eyeclosed.png")).convert_alpha()
 player_eyeclosed_img = pygame.transform.scale(player_eyeclosed_img, (32, 32))
 
 def tint_image(img, tint):
@@ -138,9 +149,9 @@ grass_dark = tint_image(grass_normal, (120, 180, 120, 255)) if grass_normal else
 def generate_world(preset, difficulty):
     world = [[GRASS for _ in range(world_cols)] for _ in range(world_rows)]
 
-    def area_clear(top, left, h, w, pad=1):
-        for r in range(top - pad, top + h + pad):
-            for c in range(left - pad, left + w + pad):
+    def area_is_clear(top, left, height, width, pad=1):
+        for r in range(top - pad, top + height + pad):
+            for c in range(left - pad, left + width + pad):
                 if r < 0 or c < 0 or r >= world_rows or c >= world_cols:
                     return False
                 if world[r][c] != GRASS:
@@ -150,96 +161,160 @@ def generate_world(preset, difficulty):
     if preset == "free":
         return world
 
-    crowded = preset == "crowded"
-    hard = difficulty == "hard"
+    crowded = (preset == "crowded")
+    hard = (difficulty == "hard")
 
+    # In hard mode: fewer structures overall
     structure_factor = 0.6 if hard else 1.0
 
     lake_count = int((60 if crowded else 30) * structure_factor)
     tree_count = int((250 if crowded else 140) * structure_factor)
-    house_count = int((55 if crowded else 28) * structure_factor)
-    rock_count = int((150 if crowded else 85) * structure_factor)
-    dirt_count = int((220 if crowded else 130) * structure_factor)
 
+    house_count = int((55 if crowded else 28) * structure_factor)
+    rock_vein_count = int((150 if crowded else 85) * structure_factor)
+
+    # BIG TREES restored (you asked to add back)
+    big_tree_count = int((80 if crowded else 42) * structure_factor)
+
+    dirt_patch_count = int((220 if crowded else 130) * structure_factor)
+
+    # lakes
     for _ in range(lake_count):
         for _ in range(80):
             size = random.randint(3, 5)
-            r = random.randint(1, world_rows - size - 2)
-            c = random.randint(1, world_cols - size - 2)
-            if area_clear(r, c, size, size, 2):
-                for rr in range(size):
-                    for cc in range(size):
-                        world[r + rr][c + cc] = WATER
+            row = random.randint(1, world_rows - size - 2)
+            col = random.randint(1, world_cols - size - 2)
+            if area_is_clear(row, col, size, size, pad=2):
+                for r in range(size):
+                    for c in range(size):
+                        world[row + r][col + c] = WATER
                 break
 
+    # small trees
     for _ in range(tree_count):
         for _ in range(120):
-            r = random.randint(2, world_rows - 3)
-            c = random.randint(2, world_cols - 3)
-            if area_clear(r - 1, c - 1, 3, 3, 2):
-                world[r][c] = WOOD
-                for dr, dc in [(-1,0),(1,0),(0,-1),(0,1)]:
-                    world[r + dr][c + dc] = LEAVES
+            row = random.randint(2, world_rows - 3)
+            col = random.randint(2, world_cols - 3)
+            min_r = row - 1
+            min_c = col - 1
+            if area_is_clear(min_r, min_c, 3, 3, pad=2):
+                world[row][col] = WOOD
+                world[row - 1][col] = LEAVES
+                world[row + 1][col] = LEAVES
+                world[row][col - 1] = LEAVES
+                world[row][col + 1] = LEAVES
                 break
 
-    houses = []
+    # houses (4x4)
     for _ in range(house_count):
-        for _ in range(120):
-            r = random.randint(2, world_rows - 6)
-            c = random.randint(2, world_cols - 6)
-            if area_clear(r, c, 4, 4, 2):
-                for rr in range(r, r + 4):
-                    for cc in range(c, c + 4):
-                        inside = r + 1 <= rr <= r + 2 and c + 1 <= cc <= c + 2
-                        world[rr][cc] = WOOD if inside else BRICK
-                houses.append((r, c))
+        for _ in range(140):
+            r0 = random.randint(2, world_rows - 6)
+            c0 = random.randint(2, world_cols - 6)
+            top = r0
+            left = c0
+            if area_is_clear(top, left, 4, 4, pad=2):
+                for r in range(top, top + 4):
+                    for c in range(left, left + 4):
+                        inside = (top + 1 <= r <= top + 2) and (left + 1 <= c <= left + 2)
+                        world[r][c] = WOOD if inside else BRICK
                 break
 
-    for _ in range(rock_count):
-        for _ in range(120):
-            r = random.randint(2, world_rows - 6)
-            c = random.randint(2, world_cols - 6)
-            if area_clear(r, c, 4, 4, 2):
-                for _ in range(random.randint(6, 12)):
-                    rr = r + random.randint(0, 3)
-                    cc = c + random.randint(0, 3)
+    # rock veins
+    for _ in range(rock_vein_count):
+        for _ in range(140):
+            top = random.randint(2, world_rows - 6)
+            left = random.randint(2, world_cols - 6)
+            if area_is_clear(top, left, 4, 4, pad=2):
+                n = random.randint(6, 12)
+                cells = [(top + r, left + c) for r in range(4) for c in range(4)]
+                random.shuffle(cells)
+                for i in range(n):
+                    rr, cc = cells[i]
                     world[rr][cc] = STONE
                 break
 
-    for _ in range(dirt_count):
+    # BIG TREES (restored)
+    for _ in range(big_tree_count):
+        for _ in range(160):
+            r = random.randint(3, world_rows - 5)
+            c = random.randint(3, world_cols - 5)
+            top = r - 2
+            left = c - 2
+            if area_is_clear(top, left, 6, 6, pad=2):
+                # 2x2 trunk
+                for rr in (r, r + 1):
+                    for cc in (c, c + 1):
+                        world[rr][cc] = WOOD
+
+                # canopy ring
+                for rr in range(r - 1, r + 3):
+                    for cc in range(c - 1, c + 3):
+                        if not (r <= rr <= r + 1 and c <= cc <= c + 1):
+                            world[rr][cc] = LEAVES
+
+                # extra leaf lobes
+                for rr in range(r - 2, r):
+                    for cc in range(c, c + 2):
+                        world[rr][cc] = LEAVES
+                for rr in range(r + 2, r + 4):
+                    for cc in range(c, c + 2):
+                        world[rr][cc] = LEAVES
+                for rr in range(r, r + 2):
+                    for cc in range(c - 2, c):
+                        world[rr][cc] = LEAVES
+                for rr in range(r, r + 2):
+                    for cc in range(c + 2, c + 4):
+                        world[rr][cc] = LEAVES
+
+                break
+
+    # dirt patches
+    patch_sizes = [(1, 2), (2, 1), (2, 2), (2, 3), (3, 2)]
+    for _ in range(dirt_patch_count):
         for _ in range(120):
-            h, w = random.choice([(1,2),(2,1),(2,2),(2,3),(3,2)])
-            r = random.randint(2, world_rows - h - 3)
-            c = random.randint(2, world_cols - w - 3)
-            if area_clear(r, c, h, w, 2):
-                for rr in range(h):
-                    for cc in range(w):
-                        world[r + rr][c + cc] = DIRT
+            h, w = random.choice(patch_sizes)
+            top = random.randint(2, world_rows - h - 3)
+            left = random.randint(2, world_cols - w - 3)
+            if area_is_clear(top, left, h, w, pad=2):
+                for rr in range(top, top + h):
+                    for cc in range(left, left + w):
+                        world[rr][cc] = DIRT
                 break
 
     return world
 
 # ==========================================================
 # -------------------- START MENU ---------------------------
+#  - Nothing starts on mode click
+#  - Hard Mode button only shown when Survival selected
+#  - Must press Start
+#  - Hover highlighting enabled
 # ==========================================================
 def start_menu():
-    title_font = pygame.font.SysFont(None, 64)
-    button_font = pygame.font.SysFont(None, 36)
+    # Buttons
+    mode_survival = pygame.Rect(screen_width // 2 - 180, 230, 360, 60)
+    mode_creative = pygame.Rect(screen_width // 2 - 180, 305, 360, 60)
 
-    mode_survival = pygame.Rect(screen_width//2 - 160, 240, 320, 60)
-    mode_creative = pygame.Rect(screen_width//2 - 160, 320, 320, 60)
+    preset_normal = pygame.Rect(screen_width // 2 - 230, 410, 150, 52)
+    preset_crowded = pygame.Rect(screen_width // 2 - 75, 410, 150, 52)
+    preset_free = pygame.Rect(screen_width // 2 + 80, 410, 150, 52)
 
-    preset_buttons = {
-        "normal": pygame.Rect(screen_width//2 - 220, 420, 140, 52),
-        "crowded": pygame.Rect(screen_width//2 - 70, 420, 140, 52),
-        "free": pygame.Rect(screen_width//2 + 80, 420, 140, 52),
-    }
+    hard_button = pygame.Rect(screen_width // 2 - 110, 480, 220, 52)
+    start_button = pygame.Rect(screen_width // 2 - 110, 510, 220, 56)
 
-    hard_button = pygame.Rect(screen_width//2 - 100, 500, 200, 52)
 
     selected_mode = None
     selected_preset = "normal"
     difficulty = "normal"
+
+    def draw_button(rect, text, hovered, selected=False, text_color=(255, 255, 255), fill=(60, 60, 60)):
+        pygame.draw.rect(screen, fill, rect, border_radius=10)
+        if hovered:
+            pygame.draw.rect(screen, (255, 255, 255), rect, 3, border_radius=10)
+        if selected:
+            pygame.draw.rect(screen, (255, 255, 0), rect, 3, border_radius=10)
+        t = button_font.render(text, True, text_color)
+        screen.blit(t, t.get_rect(center=rect.center))
 
     while True:
         mx, my = pygame.mouse.get_pos()
@@ -247,49 +322,58 @@ def start_menu():
         for e in pygame.event.get():
             if e.type == pygame.QUIT:
                 pygame.quit()
-                exit()
+                raise SystemExit
             if e.type == pygame.MOUSEBUTTONDOWN:
                 if mode_survival.collidepoint(mx, my):
                     selected_mode = "survival"
-                if mode_creative.collidepoint(mx, my):
+                elif mode_creative.collidepoint(mx, my):
                     selected_mode = "creative"
-                for k, rect in preset_buttons.items():
-                    if rect.collidepoint(mx, my):
-                        selected_preset = k
+                    difficulty = "normal"  # hard irrelevant outside survival
+
+                if preset_normal.collidepoint(mx, my):
+                    selected_preset = "normal"
+                elif preset_crowded.collidepoint(mx, my):
+                    selected_preset = "crowded"
+                elif preset_free.collidepoint(mx, my):
+                    selected_preset = "free"
+
                 if selected_mode == "survival" and hard_button.collidepoint(mx, my):
                     difficulty = "hard" if difficulty == "normal" else "normal"
-                if selected_mode:
-                    if mode_survival.collidepoint(mx, my) or mode_creative.collidepoint(mx, my):
-                        return selected_mode, selected_preset, difficulty
 
-        screen.fill((20,20,20))
-        screen.blit(
-            title_font.render(f"Block World! V: {GAME_VERSION}", True, (255,255,255)),
-            (screen_width//2 - 260, 140)
-        )
+                # START only
+                if start_button.collidepoint(mx, my) and selected_mode is not None:
+                    return selected_mode, selected_preset, difficulty
 
-        pygame.draw.rect(screen, (60,60,60), mode_survival)
-        pygame.draw.rect(screen, (60,60,60), mode_creative)
+        screen.fill((20, 20, 20))
 
-        screen.blit(button_font.render("Survival mode", True, (255,255,255)),
-                    button_font.render("Survival mode", True, (255,255,255)).get_rect(center=mode_survival.center))
-        screen.blit(button_font.render("Creative mode", True, (255,255,255)),
-                    button_font.render("Creative mode", True, (255,255,255)).get_rect(center=mode_creative.center))
+        title = title_font.render(f"Block World! V: {GAME_VERSION}", True, (255, 255, 255))
+        screen.blit(title, title.get_rect(center=(screen_width // 2, 130)))
 
-        for k, rect in preset_buttons.items():
-            pygame.draw.rect(screen, (60,60,60), rect)
-            if k == selected_preset:
-                pygame.draw.rect(screen, (255,255,0), rect, 3)
-            screen.blit(small_font.render(k.capitalize(), True, (255,255,255)),
-                        small_font.render(k.capitalize(), True, (255,255,255)).get_rect(center=rect.center))
+        # Mode buttons
+        draw_button(mode_survival, "Survival mode", mode_survival.collidepoint(mx, my), selected=(selected_mode == "survival"))
+        draw_button(mode_creative, "Creative mode", mode_creative.collidepoint(mx, my), selected=(selected_mode == "creative"))
 
+        # Presets
+        wtxt = button_font.render("World:", True, (255, 255, 255))
+        screen.blit(wtxt, (screen_width // 2 - 180, 375))
+
+        for rect, name in [(preset_normal, "Normal"), (preset_crowded, "Crowded"), (preset_free, "Free")]:
+            draw_button(rect, name, rect.collidepoint(mx, my), selected=(name.lower() == selected_preset), text_color=(255, 255, 255), fill=(55, 55, 55))
+
+        # Hard mode (only if survival selected)
         if selected_mode == "survival":
-            pygame.draw.rect(screen, (60,60,60), hard_button)
-            txt = f"Hard Mode: {'ON' if difficulty=='hard' else 'OFF'}"
-            screen.blit(button_font.render(txt, True, (255,80,80) if difficulty=="hard" else (200,200,200)),
-                        button_font.render(txt, True, (255,80,80) if difficulty=="hard" else (200,200,200)).get_rect(center=hard_button.center))
+            txt = f"Hard Mode: {'ON' if difficulty == 'hard' else 'OFF'}"
+            color = (255, 80, 80) if difficulty == "hard" else (220, 220, 220)
+            draw_button(hard_button, txt, hard_button.collidepoint(mx, my), selected=(difficulty == "hard"), text_color=color, fill=(55, 55, 55))
+
+        # Start button
+        if selected_mode is None:
+            draw_button(start_button, "Start (pick mode)", start_button.collidepoint(mx, my), selected=False, text_color=(160, 160, 160), fill=(45, 45, 45))
+        else:
+            draw_button(start_button, "START", start_button.collidepoint(mx, my), selected=False, text_color=(255, 255, 255), fill=(80, 80, 80))
 
         pygame.display.flip()
+
 # ==========================================================
 # -------------------- TOOLBAR ------------------------------
 # ==========================================================
@@ -305,7 +389,6 @@ def build_toolbar_slots(mode, inventory):
                 continue
             if inventory.get(bid, 0) > 0:
                 ids.append(bid)
-
     ids.append(DELETE)
 
     slots = []
@@ -368,404 +451,16 @@ def load_game(slot):
 def save_exists(slot):
     return os.path.exists(os.path.join(SAVE_DIR, f"save_slot_{slot}.dat"))
 
-# ==========================================================
-# -------------------- GAME (NO ZOMBIES YET) ----------------
-# ==========================================================
+# ================================
+# END Part 1/3
+# ================================
+# ================================
+# Block World - Alpha 0.6 (Full)
+# Part 2/3
+# ================================
+
 def run_game(mode, preset, difficulty):
-    global better_grass_enabled, show_options_menu, show_save_menu
-
-    hard = (difficulty == "hard")
-
-    # world
-    world = generate_world(preset, difficulty)
-
-    # player/inventory
-    inventory = {bid: 0 for bid in BLOCKS.keys()}
-    px = (world_cols * blocksize) // 2
-    py = (world_rows * blocksize) // 2
-    selected_block = DELETE if mode == "survival" else GRASS
-
-    # health
-    health = float(MAX_HEALTH)
-    damage_timer = 0
-
-    # visuals
-    blink_timer = 0
-    blink_interval = 180
-    blink_duration = 8
-    angle = 0
-
-    # mining
-    mine_target = None
-    mine_progress = 0
-    mining = False
-    MINE_TIME = 45
-
-    # ui
-    options_button_rect = pygame.Rect(screen_width - 36, 8, 28, 28)
-    menu_rect = pygame.Rect(screen_width - 220, 40, 200, 130)
-    quit_rect = pygame.Rect(menu_rect.x + 10, menu_rect.y + 10, 180, 30)
-    grass_rect = pygame.Rect(menu_rect.x + 10, menu_rect.y + 50, 180, 30)
-    save_rect = pygame.Rect(menu_rect.x + 10, menu_rect.y + 90, 180, 30)
-
-    save_menu_rect = pygame.Rect(screen_width // 2 - 180, 120, 360, 260)
-    slot_rects = [pygame.Rect(save_menu_rect.x + 40, save_menu_rect.y + 60 + i * 50, 280, 40) for i in range(3)]
-    back_rect = pygame.Rect(save_menu_rect.x + 100, save_menu_rect.y + 210, 160, 36)
-
-    # ======================================================
-    # ---------------- WORLD HELPERS ------------------------
-    # ======================================================
-    def get_block(r, c):
-        if 0 <= r < world_rows and 0 <= c < world_cols:
-            return world[r][c]
-        return VOID
-
-    def solid_at(px_, py_):
-        c = int(px_ // blocksize)
-        r = int(py_ // blocksize)
-        bid = get_block(r, c)
-        return bid == VOID or (bid in SOLID_BLOCKS)
-
-    def mineable(bid):
-        return bid in {GRASS, DIRT, WOOD, LEAVES}
-
-    # ======================================================
-    # ---------------- MAIN LOOP ----------------------------
-    # ======================================================
-    running = True
-    while running:
-        clock.tick(60)
-
-        blink_timer += 1
-        if blink_timer > blink_interval + blink_duration:
-            blink_timer = 0
-
-        if damage_timer > 0:
-            damage_timer -= 1
-
-        mx, my = pygame.mouse.get_pos()
-
-        # ---------------- movement ----------------
-        dx = dy = 0
-        keys = pygame.key.get_pressed()
-        if keys[pygame.K_w] or keys[pygame.K_UP]:
-            dy -= 1
-        if keys[pygame.K_s] or keys[pygame.K_DOWN]:
-            dy += 1
-        if keys[pygame.K_a] or keys[pygame.K_LEFT]:
-            dx -= 1
-        if keys[pygame.K_d] or keys[pygame.K_RIGHT]:
-            dx += 1
-
-        if dx or dy:
-            l = math.hypot(dx, dy)
-            dx /= l
-            dy /= l
-
-        nx = px + dx * player_speed
-        ny = py + dy * player_speed
-        h = HITBOX_SIZE // 2 - 1
-
-        if not any(solid_at(nx + ox, py + oy) for ox, oy in [(-h, -h), (h, -h), (-h, h), (h, h)]):
-            px = nx
-        if not any(solid_at(px + ox, ny + oy) for ox, oy in [(-h, -h), (h, -h), (-h, h), (h, h)]):
-            py = ny
-
-        world_px_w = world_cols * blocksize
-        world_px_h = world_rows * blocksize
-        px = max(0, min(px, world_px_w - 1))
-        py = max(0, min(py, world_px_h - 1))
-
-        # ---------------- camera ----------------
-        cam_x = px - screen_width // 2
-        cam_y = py - view_height // 2
-        cam_x = max(-screen_width // 2, min(cam_x, world_px_w - screen_width // 2))
-        cam_y = max(-view_height // 2, min(cam_y, world_px_h - view_height // 2))
-
-        # ---------------- aim angle ----------------
-        cx = screen_width // 2
-        cy = view_height // 2
-        if mx != cx or my != cy:
-            angle = -math.degrees(math.atan2(mx - cx, -(my - cy)))
-
-        # ---------------- hovered tile ----------------
-        hovered_cell = None
-        if my < view_height:
-            c = int((mx + cam_x) // blocksize)
-            r = int((my + cam_y) // blocksize)
-            hovered_cell = (r, c)
-
-        toolbar_slots = build_toolbar_slots(mode, inventory)
-
-        # ---------------- events ----------------
-        for e in pygame.event.get():
-            if e.type == pygame.QUIT:
-                running = False
-
-            if e.type == pygame.KEYDOWN:
-                if e.key == pygame.K_x:
-                    selected_block = DELETE
-                if pygame.K_1 <= e.key <= pygame.K_9:
-                    idx = e.key - pygame.K_1
-                    ids = [bid for _, bid in toolbar_slots]
-                    if 0 <= idx < len(ids):
-                        selected_block = ids[idx]
-
-            if e.type == pygame.MOUSEBUTTONDOWN:
-                if options_button_rect.collidepoint(mx, my):
-                    show_options_menu = not show_options_menu
-                    show_save_menu = False
-                    continue
-
-                # -------- SAVE MENU --------
-                if show_save_menu:
-                    clicked_slot = None
-                    for i, rect in enumerate(slot_rects):
-                        if rect.collidepoint(mx, my):
-                            clicked_slot = i + 1
-                            break
-
-                    if clicked_slot is not None:
-                        payload = {
-                            "world": world,
-                            "px": px,
-                            "py": py,
-                            "inventory": inventory,
-                            "better_grass": better_grass_enabled,
-                            "mode": mode,
-                            "preset": preset,
-                            "difficulty": difficulty,
-                            "version": GAME_VERSION,
-                            "health": health,
-                        }
-
-                        if e.button == 3:
-                            save_game(clicked_slot, payload)
-                        else:
-                            if save_exists(clicked_slot):
-                                data = load_game(clicked_slot)
-                                if data:
-                                    world = data.get("world", world)
-                                    px = data.get("px", px)
-                                    py = data.get("py", py)
-                                    inventory = data.get("inventory", inventory)
-                                    better_grass_enabled = data.get("better_grass", better_grass_enabled)
-                                    health = float(data.get("health", health))
-                                    selected_block = DELETE if mode == "survival" else GRASS
-                            else:
-                                save_game(clicked_slot, payload)
-
-                        show_save_menu = False
-                        continue
-
-                    if back_rect.collidepoint(mx, my):
-                        show_save_menu = False
-                        continue
-
-                    continue
-
-                # -------- OPTIONS MENU --------
-                if show_options_menu:
-                    if quit_rect.collidepoint(mx, my):
-                        show_options_menu = False
-                        return
-                    if grass_rect.collidepoint(mx, my):
-                        better_grass_enabled = not better_grass_enabled
-                        show_options_menu = False
-                        continue
-                    if save_rect.collidepoint(mx, my):
-                        show_save_menu = True
-                        show_options_menu = False
-                        continue
-                    continue
-
-                # -------- toolbar click --------
-                if my >= view_height:
-                    for rect, bid in toolbar_slots:
-                        if rect.collidepoint(mx, my):
-                            selected_block = bid
-                            break
-                    continue
-
-                # -------- world click --------
-                if hovered_cell:
-                    r, c = hovered_cell
-                    bid = get_block(r, c)
-                    if bid == VOID:
-                        continue
-
-                    if mode == "creative":
-                        if selected_block == DELETE:
-                            world[r][c] = GRASS
-                        else:
-                            world[r][c] = selected_block
-                    else:
-                        # survival place (RMB)
-                        if pygame.mouse.get_pressed()[2]:
-                            if selected_block != DELETE and inventory.get(selected_block, 0) > 0:
-                                if bid == GRASS or bid == WATER:
-                                    world[r][c] = selected_block
-                                    inventory[selected_block] -= 1
-
-                        # survival mine (LMB)
-                        if e.button == 1:
-                            if mineable(bid) and bid not in {GRASS, WATER}:
-                                mine_target = (r, c)
-                                mine_progress = 0
-                                mining = True
-
-            if e.type == pygame.MOUSEBUTTONUP:
-                if e.button == 1:
-                    mining = False
-                    mine_target = None
-                    mine_progress = 0
-
-        # ---------------- mining hold logic ----------------
-        if mode == "survival" and mining and mine_target and pygame.mouse.get_pressed()[0]:
-            r, c = mine_target
-            if hovered_cell != mine_target:
-                mining = False
-                mine_target = None
-                mine_progress = 0
-            else:
-                bid = get_block(r, c)
-                if bid == VOID or (not mineable(bid)) or bid in {GRASS, WATER}:
-                    mining = False
-                    mine_target = None
-                    mine_progress = 0
-                else:
-                    mine_progress += 1
-                    if mine_progress >= MINE_TIME:
-                        inventory[bid] = inventory.get(bid, 0) + 1
-                        world[r][c] = GRASS
-                        mine_progress = 0
-                        mining = False
-                        mine_target = None
-
-        # ======================================================
-        # ---------------- RENDER -------------------------------
-        # ======================================================
-        start_col = int(cam_x // blocksize)
-        start_row = int(cam_y // blocksize)
-        end_col = start_col + base_cols + 3
-        end_row = start_row + base_rows + 3
-
-        screen.fill((0, 0, 0))
-
-        # world
-        for rr in range(start_row, end_row):
-            for cc in range(start_col, end_col):
-                bid = get_block(rr, cc)
-                if bid == GRASS and better_grass_enabled and grass_dark:
-                    img = grass_dark
-                else:
-                    img = block_images.get(bid)
-                if img:
-                    screen.blit(img, (cc * blocksize - cam_x, rr * blocksize - cam_y))
-
-        # hover highlight
-        if hovered_cell:
-            rr, cc = hovered_cell
-            pygame.draw.rect(
-                screen, (255, 255, 0),
-                (cc * blocksize - cam_x, rr * blocksize - cam_y, blocksize, blocksize),
-                2
-            )
-
-        # mining bar
-        if mode == "survival" and mining:
-            bar_w = 220
-            bar_h = 16
-            x = screen_width // 2 - bar_w // 2
-            y = view_height - 26
-            pygame.draw.rect(screen, (120, 120, 120), (x, y, bar_w, bar_h))
-            fill = int(bar_w * (mine_progress / MINE_TIME))
-            pygame.draw.rect(screen, (255, 220, 0), (x, y, fill, bar_h))
-
-        # player sprite (blink)
-        if blink_interval <= blink_timer < blink_interval + blink_duration:
-            base_img = player_eyeclosed_img
-        else:
-            base_img = player_img
-        rot = pygame.transform.rotate(base_img, angle)
-        screen.blit(rot, rot.get_rect(center=(cx, cy)))
-
-        # health bar
-        if mode == "survival":
-            bar_x = 12
-            bar_y = 12
-            bar_w = 140
-            bar_h = 16
-            pygame.draw.rect(screen, (40, 40, 40), (bar_x - 2, bar_y - 2, bar_w + 4, bar_h + 4))
-            pygame.draw.rect(screen, (120, 0, 0), (bar_x, bar_y, bar_w, bar_h))
-            fill = int(bar_w * (max(0.0, health) / float(MAX_HEALTH)))
-            pygame.draw.rect(screen, (220, 40, 40), (bar_x, bar_y, fill, bar_h))
-            hp_label = small_font.render("HP", True, (255, 255, 255))
-            screen.blit(hp_label, (bar_x, bar_y - 16))
-
-        # options button
-        pygame.draw.rect(screen, (60, 60, 60), options_button_rect, border_radius=6)
-        dots = font.render("⋮", True, (255, 255, 255))
-        screen.blit(dots, dots.get_rect(center=options_button_rect.center))
-
-        # options menu
-        if show_options_menu:
-            pygame.draw.rect(screen, (30, 30, 30), menu_rect, border_radius=8)
-            pygame.draw.rect(screen, (255, 255, 255), menu_rect, 2, border_radius=8)
-
-            pygame.draw.rect(screen, (60, 60, 60), quit_rect)
-            pygame.draw.rect(screen, (60, 60, 60), grass_rect)
-            pygame.draw.rect(screen, (60, 60, 60), save_rect)
-
-            qtxt = font.render("Quit & New Game", True, (255, 255, 255))
-            gtxt = font.render(
-                f"Better Grass: {'ON' if better_grass_enabled else 'OFF'}",
-                True,
-                (255, 220, 0) if better_grass_enabled else (200, 200, 200),
-            )
-            stxt = font.render("Save / Load", True, (255, 255, 255))
-
-            screen.blit(qtxt, qtxt.get_rect(center=quit_rect.center))
-            screen.blit(gtxt, gtxt.get_rect(center=grass_rect.center))
-            screen.blit(stxt, stxt.get_rect(center=save_rect.center))
-
-        # save menu
-        if show_save_menu:
-            pygame.draw.rect(screen, (25, 25, 25), save_menu_rect, border_radius=10)
-            pygame.draw.rect(screen, (255, 255, 255), save_menu_rect, 2, border_radius=10)
-
-            title = font.render("Save / Load", True, (255, 255, 255))
-            screen.blit(title, title.get_rect(center=(save_menu_rect.centerx, save_menu_rect.y + 25)))
-
-            for i, rect in enumerate(slot_rects):
-                exists = save_exists(i + 1)
-                pygame.draw.rect(screen, (60, 60, 60), rect)
-                label = f"Slot {i + 1} : {'Saved' if exists else 'Empty'}"
-                txt = font.render(label, True, (255, 255, 255))
-                screen.blit(txt, txt.get_rect(center=rect.center))
-                if rect.collidepoint(mx, my):
-                    pygame.draw.rect(screen, (255, 255, 0), rect, 2)
-
-            hint = small_font.render(
-                "Left Click: Load / Save    Right Click: Overwrite Save",
-                True, (200, 200, 200)
-            )
-            screen.blit(hint, (save_menu_rect.x + 40, save_menu_rect.y + 185))
-
-            pygame.draw.rect(screen, (80, 80, 80), back_rect)
-            btxt = font.render("Back", True, (255, 255, 255))
-            screen.blit(btxt, btxt.get_rect(center=back_rect.center))
-
-        # toolbar
-        draw_toolbar(mode, toolbar_slots, selected_block, inventory, mx, my)
-
-        pygame.display.flip()
-# ==========================================================
-# -------------------- GAME (ZOMBIES + PATHFINDING) --------
-#   This REPLACES the Part 2 run_game by redefining it.
-# ==========================================================
-def run_game(mode, preset, difficulty):
-    global better_grass_enabled, show_options_menu, show_save_menu
+    global better_grass_enabled
 
     hard = (difficulty == "hard")
 
@@ -776,6 +471,10 @@ def run_game(mode, preset, difficulty):
     house_spawn_chance = HARD_HOUSE_SPAWN if hard else NORMAL_HOUSE_SPAWN
     damage_mult = HARD_DAMAGE_MULT if hard else 1.0
 
+    # UI state (pause logic depends on these)
+    show_options_menu = False
+    show_save_menu = False
+
     # world
     world = generate_world(preset, difficulty)
 
@@ -788,6 +487,8 @@ def run_game(mode, preset, difficulty):
     # health
     health = float(MAX_HEALTH)
     damage_timer = 0
+    frames_since_damage = 999999
+    heal_tick_timer = 0
 
     # visuals
     blink_timer = 0
@@ -801,7 +502,7 @@ def run_game(mode, preset, difficulty):
     mining = False
     MINE_TIME = 45
 
-    # ui
+    # UI rectangles
     options_button_rect = pygame.Rect(screen_width - 36, 8, 28, 28)
     menu_rect = pygame.Rect(screen_width - 220, 40, 200, 130)
     quit_rect = pygame.Rect(menu_rect.x + 10, menu_rect.y + 10, 180, 30)
@@ -996,7 +697,7 @@ def run_game(mode, preset, difficulty):
                 spawn_zombie_at_tile(tr, tc)
             dirt_spawned.add(i)
 
-        # houses: infinite spawns every 10 seconds while active
+        # houses: infinite spawn attempts every 10 seconds while active + seen
         for i, (tr, tc) in enumerate(house_spawn_cells):
             if not in_seen_chunk(tr, tc):
                 continue
@@ -1004,7 +705,11 @@ def run_game(mode, preset, difficulty):
                 continue
             if frame < house_next_spawn_frame[i]:
                 continue
+
+            # schedule next attempt NO MATTER WHAT (keeps "same chance every 10 seconds")
             house_next_spawn_frame[i] = frame + house_period_frames
+
+            # roll chance
             if random.random() < house_spawn_chance:
                 spawn_zombie_at_tile(tr, tc)
 
@@ -1105,7 +810,7 @@ def run_game(mode, preset, difficulty):
         # extra axis-lock bias in NORMAL mode:
         # If last move was X -> try to reduce Y distance first (zr -> pr)
         # If last move was Y -> try to reduce X distance first (zc -> pc)
-        if (not hard) and (zr, zc) in dist_map:
+        if not hard:
             axis_target = None
             if last_player_axis == "x" and zr != pr:
                 cand = []
@@ -1129,6 +834,14 @@ def run_game(mode, preset, difficulty):
 
         return best_cell
 
+    # ================================
+    # END Part 2/3
+    # ================================
+# ================================
+# Block World - Alpha 0.6 (Full)
+# Part 3/3
+# ================================
+
     # ======================================================
     # ---------------- MAIN LOOP ----------------------------
     # ======================================================
@@ -1139,70 +852,98 @@ def run_game(mode, preset, difficulty):
         clock.tick(60)
         frame += 1
 
+        mx, my = pygame.mouse.get_pos()
+
+        # Determine paused state (you requested: pause world + player)
+        paused = show_options_menu or show_save_menu
+
+        # ---- blink timer always ticks (visual ok) ----
         blink_timer += 1
         if blink_timer > blink_interval + blink_duration:
             blink_timer = 0
 
-        if damage_timer > 0:
-            damage_timer -= 1
+        # ---- damage cooldown ticks only when not paused ----
+        if not paused:
+            if damage_timer > 0:
+                damage_timer -= 1
 
-        mx, my = pygame.mouse.get_pos()
+            # passive healing timing
+            frames_since_damage += 1
+            if health < MAX_HEALTH and frames_since_damage >= HEAL_DELAY_FRAMES:
+                heal_tick_timer += 1
+                if heal_tick_timer >= HEAL_TICK_FRAMES:
+                    heal_tick_timer = 0
+                    health = min(float(MAX_HEALTH), health + HEAL_AMOUNT)
+        else:
+            # freeze heal tick while paused (full pause)
+            heal_tick_timer = heal_tick_timer
 
-        # ---------------- movement ----------------
-        dx = dy = 0
-        keys = pygame.key.get_pressed()
-        if keys[pygame.K_w] or keys[pygame.K_UP]:
-            dy -= 1
-        if keys[pygame.K_s] or keys[pygame.K_DOWN]:
-            dy += 1
-        if keys[pygame.K_a] or keys[pygame.K_LEFT]:
-            dx -= 1
-        if keys[pygame.K_d] or keys[pygame.K_RIGHT]:
-            dx += 1
+        # ======================================================
+        # ---------------- PLAYER MOVEMENT ----------------------
+        # (PAUSED => no movement)
+        # ======================================================
+        if not paused:
+            dx = dy = 0
+            keys = pygame.key.get_pressed()
+            if keys[pygame.K_w] or keys[pygame.K_UP]:
+                dy -= 1
+            if keys[pygame.K_s] or keys[pygame.K_DOWN]:
+                dy += 1
+            if keys[pygame.K_a] or keys[pygame.K_LEFT]:
+                dx -= 1
+            if keys[pygame.K_d] or keys[pygame.K_RIGHT]:
+                dx += 1
 
-        if dx != 0 or dy != 0:
-            if abs(dx) >= abs(dy):
-                last_player_axis = "x"
-            else:
-                last_player_axis = "y"
+            if dx != 0 or dy != 0:
+                if abs(dx) >= abs(dy):
+                    last_player_axis = "x"
+                else:
+                    last_player_axis = "y"
 
-        if dx or dy:
-            l = math.hypot(dx, dy)
-            dx /= l
-            dy /= l
+            if dx or dy:
+                l = math.hypot(dx, dy)
+                dx /= l
+                dy /= l
 
-        nx = px + dx * player_speed
-        ny = py + dy * player_speed
-        h = HITBOX_SIZE // 2 - 1
+            nx = px + dx * player_speed
+            ny = py + dy * player_speed
+            h = HITBOX_SIZE // 2 - 1
 
-        if not any(solid_at(nx + ox, py + oy) for ox, oy in [(-h, -h), (h, -h), (-h, h), (h, h)]):
-            px = nx
-        if not any(solid_at(px + ox, ny + oy) for ox, oy in [(-h, -h), (h, -h), (-h, h), (h, h)]):
-            py = ny
+            if not any(solid_at(nx + ox, py + oy) for ox, oy in [(-h, -h), (h, -h), (-h, h), (h, h)]):
+                px = nx
+            if not any(solid_at(px + ox, ny + oy) for ox, oy in [(-h, -h), (h, -h), (-h, h), (h, h)]):
+                py = ny
 
         world_px_w = world_cols * blocksize
         world_px_h = world_rows * blocksize
         px = max(0, min(px, world_px_w - 1))
         py = max(0, min(py, world_px_h - 1))
 
-        # ---------------- camera + seen chunks + spawns ----------------
+        # ======================================================
+        # ---------------- CAMERA / SEEN / SPAWNS --------------
+        # (PAUSED => camera still follows player, but player doesn't move anyway)
+        # ======================================================
         cam_x = px - screen_width // 2
         cam_y = py - view_height // 2
         cam_x = max(-screen_width // 2, min(cam_x, world_px_w - screen_width // 2))
         cam_y = max(-view_height // 2, min(cam_y, world_px_h - view_height // 2))
 
+        # mark seen always (so if you open menu, it doesn't break state)
         mark_seen_chunks(cam_x, cam_y)
 
-        if mode == "survival" and frame % SPAWN_CHECK_FRAMES == 0:
+        # spawns paused when menu open
+        if mode == "survival" and (not paused) and frame % SPAWN_CHECK_FRAMES == 0:
             spawn_from_seen_sources(frame)
 
-        # ---------------- aim angle ----------------
+        # ======================================================
+        # ---------------- AIM ANGLE ----------------------------
+        # ======================================================
         cx = screen_width // 2
         cy = view_height // 2
         if mx != cx or my != cy:
             angle = -math.degrees(math.atan2(mx - cx, -(my - cy)))
 
-        # ---------------- hovered tile ----------------
+        # hovered tile
         hovered_cell = None
         if my < view_height:
             c = int((mx + cam_x) // blocksize)
@@ -1211,8 +952,11 @@ def run_game(mode, preset, difficulty):
 
         toolbar_slots = build_toolbar_slots(mode, inventory)
 
-        # ---------------- zombie update ----------------
-        if mode == "survival" and (not show_options_menu) and (not show_save_menu):
+        # ======================================================
+        # ---------------- ZOMBIE UPDATE ------------------------
+        # (PAUSED => no zombie movement or attacks)
+        # ======================================================
+        if mode == "survival" and (not paused):
             if frame % PATH_UPDATE_FRAMES == 0:
                 rebuild_dist_map()
 
@@ -1251,13 +995,17 @@ def run_game(mode, preset, difficulty):
                 if not zombie_solid_at(z["x"], nyz):
                     z["y"] = nyz
 
-                # attack check (use updated position)
+                # attack check
                 dist_now = math.hypot(px - z["x"], py - z["y"])
                 if dist_now < 20 and damage_timer == 0 and health > 0:
                     health = max(0.0, health - (1.0 * damage_mult))
                     damage_timer = ZOMBIE_DAMAGE_COOLDOWN
+                    frames_since_damage = 0
+                    heal_tick_timer = 0
 
-        # ---------------- events ----------------
+        # ======================================================
+        # ---------------- EVENTS -------------------------------
+        # ======================================================
         for e in pygame.event.get():
             if e.type == pygame.QUIT:
                 running = False
@@ -1272,9 +1020,11 @@ def run_game(mode, preset, difficulty):
                         selected_block = ids[idx]
 
             if e.type == pygame.MOUSEBUTTONDOWN:
+                # open/close options
                 if options_button_rect.collidepoint(mx, my):
                     show_options_menu = not show_options_menu
-                    show_save_menu = False
+                    if show_options_menu:
+                        show_save_menu = False
                     continue
 
                 # -------- SAVE MENU --------
@@ -1301,6 +1051,8 @@ def run_game(mode, preset, difficulty):
                             "dirt_spawned": list(dirt_spawned),
                             "seen_chunks": list(seen_chunks),
                             "house_next_spawn_frame": list(house_next_spawn_frame),
+                            "frames_since_damage": frames_since_damage,
+                            "heal_tick_timer": heal_tick_timer,
                         }
 
                         if e.button == 3:
@@ -1319,6 +1071,8 @@ def run_game(mode, preset, difficulty):
                                     dirt_spawned = set(data.get("dirt_spawned", list(dirt_spawned)))
                                     seen_chunks = set(data.get("seen_chunks", list(seen_chunks)))
                                     house_next_spawn_frame = list(data.get("house_next_spawn_frame", house_next_spawn_frame))
+                                    frames_since_damage = int(data.get("frames_since_damage", frames_since_damage))
+                                    heal_tick_timer = int(data.get("heal_tick_timer", heal_tick_timer))
                                     dist_map = {}
                                     selected_block = DELETE if mode == "survival" else GRASS
                             else:
@@ -1346,6 +1100,10 @@ def run_game(mode, preset, difficulty):
                         show_save_menu = True
                         show_options_menu = False
                         continue
+                    continue
+
+                # From here down: only allow world actions if NOT paused
+                if paused:
                     continue
 
                 # -------- zombie attack (LMB) --------
@@ -1404,8 +1162,11 @@ def run_game(mode, preset, difficulty):
                     mine_target = None
                     mine_progress = 0
 
-        # ---------------- mining hold logic ----------------
-        if mode == "survival" and mining and mine_target and pygame.mouse.get_pressed()[0]:
+        # ======================================================
+        # ---------------- MINING (HOLD) ------------------------
+        # (PAUSED => mining frozen)
+        # ======================================================
+        if (not paused) and mode == "survival" and mining and mine_target and pygame.mouse.get_pressed()[0]:
             r, c = mine_target
             if hovered_cell != mine_target:
                 mining = False
@@ -1425,7 +1186,6 @@ def run_game(mode, preset, difficulty):
                         mine_progress = 0
                         mining = False
                         mine_target = None
-                        # House shutoff is automatic via house_is_active() checking world state.
 
         # ======================================================
         # ---------------- RENDER -------------------------------
@@ -1503,14 +1263,20 @@ def run_game(mode, preset, difficulty):
         dots = font.render("⋮", True, (255, 255, 255))
         screen.blit(dots, dots.get_rect(center=options_button_rect.center))
 
+        # paused overlay text
+        if paused:
+            overlay = font.render("Menu open, world paused", True, (255, 255, 255))
+            screen.blit(overlay, overlay.get_rect(center=(screen_width // 2, view_height // 2)))
+
         # options menu
         if show_options_menu:
             pygame.draw.rect(screen, (30, 30, 30), menu_rect, border_radius=8)
             pygame.draw.rect(screen, (255, 255, 255), menu_rect, 2, border_radius=8)
 
-            pygame.draw.rect(screen, (60, 60, 60), quit_rect)
-            pygame.draw.rect(screen, (60, 60, 60), grass_rect)
-            pygame.draw.rect(screen, (60, 60, 60), save_rect)
+            for rect in [quit_rect, grass_rect, save_rect]:
+                pygame.draw.rect(screen, (60, 60, 60), rect)
+                if rect.collidepoint(mx, my):
+                    pygame.draw.rect(screen, (255, 255, 0), rect, 2)
 
             qtxt = font.render("Quit & New Game", True, (255, 255, 255))
             gtxt = font.render(
@@ -1541,13 +1307,12 @@ def run_game(mode, preset, difficulty):
                 if rect.collidepoint(mx, my):
                     pygame.draw.rect(screen, (255, 255, 0), rect, 2)
 
-            hint = small_font.render(
-                "Left Click: Load / Save    Right Click: Overwrite Save",
-                True, (200, 200, 200)
-            )
+            hint = small_font.render("Left Click: Load/Save    Right Click: Overwrite", True, (200, 200, 200))
             screen.blit(hint, (save_menu_rect.x + 40, save_menu_rect.y + 185))
 
             pygame.draw.rect(screen, (80, 80, 80), back_rect)
+            if back_rect.collidepoint(mx, my):
+                pygame.draw.rect(screen, (255, 255, 0), back_rect, 2)
             btxt = font.render("Back", True, (255, 255, 255))
             screen.blit(btxt, btxt.get_rect(center=back_rect.center))
 
@@ -1564,3 +1329,6 @@ while True:
     run_game(mode, preset, difficulty)
 
 pygame.quit()
+# ================================
+# END Part 3/3
+# ================================
