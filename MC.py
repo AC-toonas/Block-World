@@ -291,30 +291,46 @@ def generate_world(preset, difficulty):
 #  - Hover highlighting enabled
 # ==========================================================
 def start_menu():
+    CENTER_X = screen_width // 2
+
+    Y_TITLE = 120
+    Y_MODE = 220
+    Y_PRESET = 355
+    Y_HARD = 415
+    Y_START = 470
+
     # Buttons
-    mode_survival = pygame.Rect(screen_width // 2 - 180, 230, 360, 60)
-    mode_creative = pygame.Rect(screen_width // 2 - 180, 305, 360, 60)
+    mode_survival = pygame.Rect(CENTER_X - 160, Y_MODE, 320, 56)
+    mode_creative = pygame.Rect(CENTER_X - 160, Y_MODE + 70, 320, 56)
 
-    preset_normal = pygame.Rect(screen_width // 2 - 230, 410, 150, 52)
-    preset_crowded = pygame.Rect(screen_width // 2 - 75, 410, 150, 52)
-    preset_free = pygame.Rect(screen_width // 2 + 80, 410, 150, 52)
+    preset_buttons = {
+        "normal":   pygame.Rect(CENTER_X - 220, Y_PRESET, 140, 48),
+        "crowded":  pygame.Rect(CENTER_X - 70,  Y_PRESET, 140, 48),
+        "free":     pygame.Rect(CENTER_X + 80,  Y_PRESET, 140, 48),
+    }
 
-    hard_button = pygame.Rect(screen_width // 2 - 110, 480, 220, 52)
-    start_button = pygame.Rect(screen_width // 2 - 110, 510, 220, 56)
+    hard_button = pygame.Rect(CENTER_X - 120, Y_HARD, 240, 48)
+    start_button = pygame.Rect(CENTER_X - 140, Y_START, 280, 60)
 
 
     selected_mode = None
     selected_preset = "normal"
     difficulty = "normal"
 
-    def draw_button(rect, text, hovered, selected=False, text_color=(255, 255, 255), fill=(60, 60, 60)):
-        pygame.draw.rect(screen, fill, rect, border_radius=10)
+    def draw_button(rect, text, hovered, selected=False, text_color=(255,255,255), fill=(70,70,70)):
+        color = fill
         if hovered:
-            pygame.draw.rect(screen, (255, 255, 255), rect, 3, border_radius=10)
+            color = (110, 110, 110)
+
+        pygame.draw.rect(screen, color, rect, border_radius=8)
+
         if selected:
-            pygame.draw.rect(screen, (255, 255, 0), rect, 3, border_radius=10)
-        t = button_font.render(text, True, text_color)
-        screen.blit(t, t.get_rect(center=rect.center))
+            pygame.draw.rect(screen, (255, 220, 0), rect, 3, border_radius=8)
+
+        label = button_font.render(text, True, text_color)
+        screen.blit(label, label.get_rect(center=rect.center))
+
+
 
     while True:
         mx, my = pygame.mouse.get_pos()
@@ -330,12 +346,10 @@ def start_menu():
                     selected_mode = "creative"
                     difficulty = "normal"  # hard irrelevant outside survival
 
-                if preset_normal.collidepoint(mx, my):
-                    selected_preset = "normal"
-                elif preset_crowded.collidepoint(mx, my):
-                    selected_preset = "crowded"
-                elif preset_free.collidepoint(mx, my):
-                    selected_preset = "free"
+                for name, rect in preset_buttons.items():
+                    if rect.collidepoint(mx, my):
+                        selected_preset = name
+
 
                 if selected_mode == "survival" and hard_button.collidepoint(mx, my):
                     difficulty = "hard" if difficulty == "normal" else "normal"
@@ -355,10 +369,18 @@ def start_menu():
 
         # Presets
         wtxt = button_font.render("World:", True, (255, 255, 255))
-        screen.blit(wtxt, (screen_width // 2 - 180, 375))
+        screen.blit(wtxt, (CENTER_X - 180, Y_PRESET - 40))
 
-        for rect, name in [(preset_normal, "Normal"), (preset_crowded, "Crowded"), (preset_free, "Free")]:
-            draw_button(rect, name, rect.collidepoint(mx, my), selected=(name.lower() == selected_preset), text_color=(255, 255, 255), fill=(55, 55, 55))
+        for name, rect in preset_buttons.items():
+            draw_button(
+                rect,
+                name.capitalize(),
+                rect.collidepoint(mx, my),
+                selected=(name == selected_preset),
+                text_color=(255, 255, 255),
+                fill=(55, 55, 55)
+            )
+
 
         # Hard mode (only if survival selected)
         if selected_mode == "survival":
