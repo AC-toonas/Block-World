@@ -165,7 +165,11 @@ def generate_world(preset, difficulty):
     hard = (difficulty == "hard")
 
     # In hard mode: fewer structures overall
-    structure_factor = 0.6 if hard else 1.0
+    if hard and not crowded:
+        structure_factor = 0.6
+    else:
+        structure_factor = 1.0
+
 
     lake_count = int((60 if crowded else 30) * structure_factor)
     tree_count = int((250 if crowded else 140) * structure_factor)
@@ -192,7 +196,8 @@ def generate_world(preset, difficulty):
 
     # small trees
     for _ in range(tree_count):
-        for _ in range(120):
+        attempts = 200 if crowded else 120
+        for _ in range(attempts):
             row = random.randint(2, world_rows - 3)
             col = random.randint(2, world_cols - 3)
             min_r = row - 1
@@ -212,7 +217,8 @@ def generate_world(preset, difficulty):
             c0 = random.randint(2, world_cols - 6)
             top = r0
             left = c0
-            if area_is_clear(top, left, 4, 4, pad=2):
+            pad = 1 if crowded else 2
+            if area_is_clear(top, left, 4, 4, pad=pad):
                 for r in range(top, top + 4):
                     for c in range(left, left + 4):
                         inside = (top + 1 <= r <= top + 2) and (left + 1 <= c <= left + 2)
@@ -224,7 +230,8 @@ def generate_world(preset, difficulty):
         for _ in range(140):
             top = random.randint(2, world_rows - 6)
             left = random.randint(2, world_cols - 6)
-            if area_is_clear(top, left, 4, 4, pad=2):
+            pad = 1 if crowded else 2
+            if area_is_clear(top, left, 4, 4, pad=pad):
                 n = random.randint(6, 12)
                 cells = [(top + r, left + c) for r in range(4) for c in range(4)]
                 random.shuffle(cells)
@@ -240,7 +247,8 @@ def generate_world(preset, difficulty):
             c = random.randint(3, world_cols - 5)
             top = r - 2
             left = c - 2
-            if area_is_clear(top, left, 6, 6, pad=2):
+            pad = 1 if crowded else 2
+            if area_is_clear(top, left, 4, 4, pad=pad):
                 # 2x2 trunk
                 for rr in (r, r + 1):
                     for cc in (c, c + 1):
@@ -275,7 +283,8 @@ def generate_world(preset, difficulty):
             h, w = random.choice(patch_sizes)
             top = random.randint(2, world_rows - h - 3)
             left = random.randint(2, world_cols - w - 3)
-            if area_is_clear(top, left, h, w, pad=2):
+            pad = 1 if crowded else 2
+            if area_is_clear(top, left, 4, 4, pad=pad):
                 for rr in range(top, top + h):
                     for cc in range(left, left + w):
                         world[rr][cc] = DIRT

@@ -159,3 +159,6 @@ Alpha-0.65
 
 Alpha-0.7 UI Polish
  - fixed UI menu
+
+Alpha-0.75 World generation polish
+ - Fixed hard mode cancelling out crowded worlds
