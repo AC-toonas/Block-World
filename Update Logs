@@ -162,3 +162,9 @@ Alpha-0.7 UI Polish
 
 Alpha-0.75 World generation polish
  - Fixed hard mode cancelling out crowded worlds
+
+Alpha-0.8 World update
+ - added night and day cycle of 1 min each
+ - added blood moon
+  - makes zombies stronger
+  - spawn faster, damage more, go faster

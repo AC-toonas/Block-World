@@ -1,7 +1,7 @@
-# ================================
-# Block World - Alpha 0.6 (Full)
-# Part 1/3
-# ================================
+# ==========================================
+# Block World - Alpha 0.7 (Full)
+# Day/Night + Blood Moon + Respawn Shield
+# ==========================================
 import pygame
 import os
 import random
@@ -12,7 +12,7 @@ from collections import deque
 # ==========================================================
 # -------------------- VERSION ------------------------------
 # ==========================================================
-GAME_VERSION = "Alpha-0.6"
+GAME_VERSION = "Alpha-0.7"
 
 # ==========================================================
 # -------------------- CONFIG -------------------------------
@@ -66,10 +66,35 @@ PATH_UPDATE_FRAMES = 8
 # ==========================================================
 # ---------------- PASSIVE HEAL -----------------------------
 # ==========================================================
-# Heals when NOT taking damage recently, and not paused.
-HEAL_DELAY_FRAMES = 60 * 4      # must be safe for 4 seconds after being hit
-HEAL_TICK_FRAMES = 60 * 2       # then heal 1 every 2 seconds
+HEAL_DELAY_FRAMES = 60 * 4
+HEAL_TICK_FRAMES = 60 * 2
 HEAL_AMOUNT = 1.0
+
+# ==========================================================
+# ---------------- DAY / NIGHT ------------------------------
+# 1 min day + 1 min night at 60fps
+# ==========================================================
+FPS = 60
+DAY_SECONDS = 60
+NIGHT_SECONDS = 60
+DAY_FRAMES = DAY_SECONDS * FPS
+NIGHT_FRAMES = NIGHT_SECONDS * FPS
+CYCLE_FRAMES = DAY_FRAMES + NIGHT_FRAMES
+
+# Blood moon chance per night start
+BLOOD_MOON_CHANCE_NORMAL = 0.25
+BLOOD_MOON_CHANCE_HARD = 0.30
+
+BLOOD_MOON_DAMAGE_MULT = 1.5
+BLOOD_MOON_Z_SPEED_FACTOR = 0.95  # 95% of player's speed
+
+# Spawn immunity (first spawn + after death)
+RESPAWN_IMMUNITY_SECONDS = 3.5
+RESPAWN_IMMUNITY_FRAMES = int(RESPAWN_IMMUNITY_SECONDS * FPS)
+
+# Night darkness tint (multiply)
+NIGHT_TINT = (150, 150, 150, 255)  # darker
+BETTER_GRASS_TINT = (120, 180, 120, 255)
 
 # ==========================================================
 # -------------------- OPTIONS ------------------------------
@@ -134,14 +159,33 @@ player_eyeclosed_img = pygame.image.load(os.path.join(BASE_DIR, "player-eyeclose
 player_eyeclosed_img = pygame.transform.scale(player_eyeclosed_img, (32, 32))
 
 def tint_image(img, tint):
+    if img is None:
+        return None
     s = img.copy()
     overlay = pygame.Surface(s.get_size(), pygame.SRCALPHA)
     overlay.fill(tint)
     s.blit(overlay, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
     return s
 
+# Better grass variant (daytime)
 grass_normal = block_images.get(GRASS)
-grass_dark = tint_image(grass_normal, (120, 180, 120, 255)) if grass_normal else None
+grass_better = tint_image(grass_normal, BETTER_GRASS_TINT) if grass_normal else None
+
+# Night variants (precompute)
+night_block_images = {}
+for bid, img in block_images.items():
+    night_block_images[bid] = tint_image(img, NIGHT_TINT)
+
+grass_better_night = tint_image(grass_better, NIGHT_TINT) if grass_better else None
+
+def get_block_img(bid, is_night, better_grass):
+    # Grass special handling
+    if bid == GRASS and better_grass and grass_better is not None:
+        return grass_better_night if is_night else grass_better
+    # Normal blocks
+    if is_night:
+        return night_block_images.get(bid)
+    return block_images.get(bid)
 
 # ==========================================================
 # ---------------- WORLD GENERATION -------------------------
@@ -164,22 +208,17 @@ def generate_world(preset, difficulty):
     crowded = (preset == "crowded")
     hard = (difficulty == "hard")
 
-    # In hard mode: fewer structures overall
+    # In hard mode: fewer structures overall (except crowded keeps it intense)
     if hard and not crowded:
         structure_factor = 0.6
     else:
         structure_factor = 1.0
 
-
     lake_count = int((60 if crowded else 30) * structure_factor)
     tree_count = int((250 if crowded else 140) * structure_factor)
-
     house_count = int((55 if crowded else 28) * structure_factor)
     rock_vein_count = int((150 if crowded else 85) * structure_factor)
-
-    # BIG TREES restored (you asked to add back)
     big_tree_count = int((80 if crowded else 42) * structure_factor)
-
     dirt_patch_count = int((220 if crowded else 130) * structure_factor)
 
     # lakes
@@ -200,9 +239,7 @@ def generate_world(preset, difficulty):
         for _ in range(attempts):
             row = random.randint(2, world_rows - 3)
             col = random.randint(2, world_cols - 3)
-            min_r = row - 1
-            min_c = col - 1
-            if area_is_clear(min_r, min_c, 3, 3, pad=2):
+            if area_is_clear(row - 1, col - 1, 3, 3, pad=2):
                 world[row][col] = WOOD
                 world[row - 1][col] = LEAVES
                 world[row + 1][col] = LEAVES
@@ -213,10 +250,8 @@ def generate_world(preset, difficulty):
     # houses (4x4)
     for _ in range(house_count):
         for _ in range(140):
-            r0 = random.randint(2, world_rows - 6)
-            c0 = random.randint(2, world_cols - 6)
-            top = r0
-            left = c0
+            top = random.randint(2, world_rows - 6)
+            left = random.randint(2, world_cols - 6)
             pad = 1 if crowded else 2
             if area_is_clear(top, left, 4, 4, pad=pad):
                 for r in range(top, top + 4):
@@ -240,7 +275,7 @@ def generate_world(preset, difficulty):
                     world[rr][cc] = STONE
                 break
 
-    # BIG TREES (restored)
+    # BIG TREES
     for _ in range(big_tree_count):
         for _ in range(160):
             r = random.randint(3, world_rows - 5)
@@ -248,7 +283,7 @@ def generate_world(preset, difficulty):
             top = r - 2
             left = c - 2
             pad = 1 if crowded else 2
-            if area_is_clear(top, left, 4, 4, pad=pad):
+            if area_is_clear(top, left, 6, 6, pad=pad):
                 # 2x2 trunk
                 for rr in (r, r + 1):
                     for cc in (c, c + 1):
@@ -284,7 +319,7 @@ def generate_world(preset, difficulty):
             top = random.randint(2, world_rows - h - 3)
             left = random.randint(2, world_cols - w - 3)
             pad = 1 if crowded else 2
-            if area_is_clear(top, left, 4, 4, pad=pad):
+            if area_is_clear(top, left, h, w, pad=pad):
                 for rr in range(top, top + h):
                     for cc in range(left, left + w):
                         world[rr][cc] = DIRT
@@ -294,10 +329,6 @@ def generate_world(preset, difficulty):
 
 # ==========================================================
 # -------------------- START MENU ---------------------------
-#  - Nothing starts on mode click
-#  - Hard Mode button only shown when Survival selected
-#  - Must press Start
-#  - Hover highlighting enabled
 # ==========================================================
 def start_menu():
     CENTER_X = screen_width // 2
@@ -308,7 +339,6 @@ def start_menu():
     Y_HARD = 415
     Y_START = 470
 
-    # Buttons
     mode_survival = pygame.Rect(CENTER_X - 160, Y_MODE, 320, 56)
     mode_creative = pygame.Rect(CENTER_X - 160, Y_MODE + 70, 320, 56)
 
@@ -321,25 +351,17 @@ def start_menu():
     hard_button = pygame.Rect(CENTER_X - 120, Y_HARD, 240, 48)
     start_button = pygame.Rect(CENTER_X - 140, Y_START, 280, 60)
 
-
     selected_mode = None
     selected_preset = "normal"
     difficulty = "normal"
 
-    def draw_button(rect, text, hovered, selected=False, text_color=(255,255,255), fill=(70,70,70)):
-        color = fill
-        if hovered:
-            color = (110, 110, 110)
-
+    def draw_button(rect, text, hovered, selected=False, text_color=(255, 255, 255), fill=(70, 70, 70)):
+        color = (110, 110, 110) if hovered else fill
         pygame.draw.rect(screen, color, rect, border_radius=8)
-
         if selected:
             pygame.draw.rect(screen, (255, 220, 0), rect, 3, border_radius=8)
-
         label = button_font.render(text, True, text_color)
         screen.blit(label, label.get_rect(center=rect.center))
-
-
 
     while True:
         mx, my = pygame.mouse.get_pos()
@@ -353,17 +375,15 @@ def start_menu():
                     selected_mode = "survival"
                 elif mode_creative.collidepoint(mx, my):
                     selected_mode = "creative"
-                    difficulty = "normal"  # hard irrelevant outside survival
+                    difficulty = "normal"
 
                 for name, rect in preset_buttons.items():
                     if rect.collidepoint(mx, my):
                         selected_preset = name
 
-
                 if selected_mode == "survival" and hard_button.collidepoint(mx, my):
                     difficulty = "hard" if difficulty == "normal" else "normal"
 
-                # START only
                 if start_button.collidepoint(mx, my) and selected_mode is not None:
                     return selected_mode, selected_preset, difficulty
 
@@ -372,36 +392,28 @@ def start_menu():
         title = title_font.render(f"Block World! V: {GAME_VERSION}", True, (255, 255, 255))
         screen.blit(title, title.get_rect(center=(screen_width // 2, 130)))
 
-        # Mode buttons
         draw_button(mode_survival, "Survival mode", mode_survival.collidepoint(mx, my), selected=(selected_mode == "survival"))
         draw_button(mode_creative, "Creative mode", mode_creative.collidepoint(mx, my), selected=(selected_mode == "creative"))
 
-        # Presets
         wtxt = button_font.render("World:", True, (255, 255, 255))
         screen.blit(wtxt, (CENTER_X - 180, Y_PRESET - 40))
 
         for name, rect in preset_buttons.items():
-            draw_button(
-                rect,
-                name.capitalize(),
-                rect.collidepoint(mx, my),
-                selected=(name == selected_preset),
-                text_color=(255, 255, 255),
-                fill=(55, 55, 55)
-            )
+            draw_button(rect, name.capitalize(), rect.collidepoint(mx, my),
+                        selected=(name == selected_preset), fill=(55, 55, 55))
 
-
-        # Hard mode (only if survival selected)
         if selected_mode == "survival":
             txt = f"Hard Mode: {'ON' if difficulty == 'hard' else 'OFF'}"
             color = (255, 80, 80) if difficulty == "hard" else (220, 220, 220)
-            draw_button(hard_button, txt, hard_button.collidepoint(mx, my), selected=(difficulty == "hard"), text_color=color, fill=(55, 55, 55))
+            draw_button(hard_button, txt, hard_button.collidepoint(mx, my),
+                        selected=(difficulty == "hard"), text_color=color, fill=(55, 55, 55))
 
-        # Start button
         if selected_mode is None:
-            draw_button(start_button, "Start (pick mode)", start_button.collidepoint(mx, my), selected=False, text_color=(160, 160, 160), fill=(45, 45, 45))
+            draw_button(start_button, "Start (pick mode)", start_button.collidepoint(mx, my),
+                        selected=False, text_color=(160, 160, 160), fill=(45, 45, 45))
         else:
-            draw_button(start_button, "START", start_button.collidepoint(mx, my), selected=False, text_color=(255, 255, 255), fill=(80, 80, 80))
+            draw_button(start_button, "START", start_button.collidepoint(mx, my),
+                        selected=False, text_color=(255, 255, 255), fill=(80, 80, 80))
 
         pygame.display.flip()
 
@@ -482,44 +494,40 @@ def load_game(slot):
 def save_exists(slot):
     return os.path.exists(os.path.join(SAVE_DIR, f"save_slot_{slot}.dat"))
 
-# ================================
-# END Part 1/3
-# ================================
-# ================================
-# Block World - Alpha 0.6 (Full)
-# Part 2/3
-# ================================
-
+# ==========================================================
+# -------------------- GAME LOOP ---------------------------
+# ==========================================================
 def run_game(mode, preset, difficulty):
     global better_grass_enabled
 
     hard = (difficulty == "hard")
 
-    # difficulty-bound combat values
-    zombie_speed_factor = HARD_ZOMBIE_SPEED_FACTOR if hard else NORMAL_ZOMBIE_SPEED_FACTOR
-    zombie_hits_to_kill = HARD_ZOMBIE_HITS if hard else NORMAL_ZOMBIE_HITS
+    # base difficulty combat values
+    base_zombie_speed_factor = HARD_ZOMBIE_SPEED_FACTOR if hard else NORMAL_ZOMBIE_SPEED_FACTOR
+    base_zombie_hits_to_kill = HARD_ZOMBIE_HITS if hard else NORMAL_ZOMBIE_HITS
     dirt_spawn_chance = HARD_DIRT_SPAWN if hard else NORMAL_DIRT_SPAWN
     house_spawn_chance = HARD_HOUSE_SPAWN if hard else NORMAL_HOUSE_SPAWN
-    damage_mult = HARD_DAMAGE_MULT if hard else 1.0
+    base_damage_mult = HARD_DAMAGE_MULT if hard else 1.0
 
-    # UI state (pause logic depends on these)
     show_options_menu = False
     show_save_menu = False
 
-    # world
     world = generate_world(preset, difficulty)
 
-    # player/inventory
     inventory = {bid: 0 for bid in BLOCKS.keys()}
     px = (world_cols * blocksize) // 2
     py = (world_rows * blocksize) // 2
+    respawn_x, respawn_y = float(px), float(py)
+
     selected_block = DELETE if mode == "survival" else GRASS
 
-    # health
     health = float(MAX_HEALTH)
     damage_timer = 0
     frames_since_damage = 999999
     heal_tick_timer = 0
+
+    # Spawn immunity applies on first spawn too
+    invuln_timer = RESPAWN_IMMUNITY_FRAMES if mode == "survival" else 0
 
     # visuals
     blink_timer = 0
@@ -532,6 +540,12 @@ def run_game(mode, preset, difficulty):
     mine_progress = 0
     mining = False
     MINE_TIME = 45
+
+    # Day/Night cycle state
+    cycle_frame = 0
+    is_night = False
+    blood_moon = False
+    prev_is_night = False
 
     # UI rectangles
     options_button_rect = pygame.Rect(screen_width - 36, 8, 28, 28)
@@ -584,7 +598,7 @@ def run_game(mode, preset, difficulty):
                 while q:
                     rr, cc = q.popleft()
                     cells.append((rr, cc))
-                    for dr, dc in ((-1,0),(1,0),(0,-1),(0,1)):
+                    for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
                         r2, c2 = rr + dr, cc + dc
                         if 0 <= r2 < world_rows and 0 <= c2 < world_cols:
                             if world[r2][c2] == DIRT and (r2, c2) not in seen:
@@ -595,7 +609,7 @@ def run_game(mode, preset, difficulty):
         return patches
 
     def find_houses():
-        houses = []
+        houses_ = []
         for r in range(0, world_rows - 3):
             for c in range(0, world_cols - 3):
                 ok = True
@@ -613,8 +627,8 @@ def run_game(mode, preset, difficulty):
                     if not ok:
                         break
                 if ok:
-                    houses.append((r, c))
-        return houses
+                    houses_.append((r, c))
+        return houses_
 
     dirt_patches = find_dirt_patches()
     houses = find_houses()
@@ -624,7 +638,7 @@ def run_game(mode, preset, difficulty):
     for cells in dirt_patches:
         rs = sorted([p[0] for p in cells])
         cs = sorted([p[1] for p in cells])
-        patch_spawn_cells.append((rs[len(rs)//2], cs[len(cs)//2]))
+        patch_spawn_cells.append((rs[len(rs) // 2], cs[len(cs) // 2]))
 
     # one spawn cell per house (prefer outside)
     house_spawn_cells = []
@@ -649,10 +663,9 @@ def run_game(mode, preset, difficulty):
     # house core wood tiles (2x2 inside). Break all 4 -> house stops spawning forever.
     house_wood_tiles = []
     for (r, c) in houses:
-        house_wood_tiles.append([(r+1, c+1), (r+1, c+2), (r+2, c+1), (r+2, c+2)])
+        house_wood_tiles.append([(r + 1, c + 1), (r + 1, c + 2), (r + 2, c + 1), (r + 2, c + 2)])
 
     def house_is_active(i):
-        # active if ANY inside wood remains
         for rr, cc in house_wood_tiles[i]:
             if get_block(rr, cc) == WOOD:
                 return True
@@ -698,13 +711,12 @@ def run_game(mode, preset, difficulty):
     # ======================================================
     zombies = []
 
-    dirt_spawned = set()  # patches that already rolled their 1-time spawn
+    dirt_spawned = set()  # patches that already rolled their 1-time spawn (normal behavior)
 
-    # house periodic timers (spawn attempt every 10 seconds while active & seen)
-    house_period_frames = int(HOUSE_RESPAWN_SECONDS * 60)
+    house_period_frames = int(HOUSE_RESPAWN_SECONDS * FPS)
     house_next_spawn_frame = [0 for _ in range(len(houses))]
 
-    def spawn_zombie_at_tile(tr, tc):
+    def spawn_zombie_at_tile(tr, tc, hp_override=None):
         if len(zombies) >= MAX_ZOMBIES_TOTAL:
             return False
         bid = get_block(tr, tc)
@@ -714,10 +726,14 @@ def run_game(mode, preset, difficulty):
         zy = tr * blocksize + blocksize / 2
         if zombie_solid_at(zx, zy):
             return False
-        zombies.append({"x": float(zx), "y": float(zy), "hp": int(zombie_hits_to_kill)})
+        hp = int(base_zombie_hits_to_kill) if hp_override is None else int(hp_override)
+        zombies.append({"x": float(zx), "y": float(zy), "hp": hp})
         return True
 
-    def spawn_from_seen_sources(frame):
+    def spawn_from_seen_sources(frame_):
+        # BLOOD MOON RULE: houses paused, dirt patches guaranteed spawn (handled on blood moon start)
+        # Normal rule: dirt patches roll once when first seen, houses roll periodically.
+
         # dirt patches: one-time roll when first seen
         for i, (tr, tc) in enumerate(patch_spawn_cells):
             if i in dirt_spawned:
@@ -728,26 +744,24 @@ def run_game(mode, preset, difficulty):
                 spawn_zombie_at_tile(tr, tc)
             dirt_spawned.add(i)
 
-        # houses: infinite spawn attempts every 10 seconds while active + seen
+        # houses: periodic (skip entirely on blood moon nights)
+        if blood_moon:
+            return
+
         for i, (tr, tc) in enumerate(house_spawn_cells):
             if not in_seen_chunk(tr, tc):
                 continue
             if not house_is_active(i):
                 continue
-            if frame < house_next_spawn_frame[i]:
+            if frame_ < house_next_spawn_frame[i]:
                 continue
 
-            # schedule next attempt NO MATTER WHAT (keeps "same chance every 10 seconds")
-            house_next_spawn_frame[i] = frame + house_period_frames
-
-            # roll chance
+            house_next_spawn_frame[i] = frame_ + house_period_frames
             if random.random() < house_spawn_chance:
                 spawn_zombie_at_tile(tr, tc)
 
     # ======================================================
     # ---------------- PATHFINDING MAP ----------------------
-    #   Normal: 4-dir flow + axis-priority
-    #   Hard:   8-dir shortest path + no corner cutting
     # ======================================================
     dist_map = {}
 
@@ -774,9 +788,9 @@ def run_game(mode, preset, difficulty):
         q.append((pr, pc))
         d[(pr, pc)] = 0
 
-        neigh = [(-1,0),(1,0),(0,-1),(0,1)]
+        neigh = [(-1, 0), (1, 0), (0, -1), (0, 1)]
         if hard:
-            neigh = neigh + [(-1,-1),(-1,1),(1,-1),(1,1)]
+            neigh = neigh + [(-1, -1), (-1, 1), (1, -1), (1, 1)]
 
         while q:
             r, c = q.popleft()
@@ -793,7 +807,6 @@ def run_game(mode, preset, difficulty):
                 if not can_step(rr, cc):
                     continue
 
-                # hard diagonal corner-cut prevention
                 if hard and dr != 0 and dc != 0:
                     if not can_step(r + dr, c) or not can_step(r, c + dc):
                         continue
@@ -803,7 +816,7 @@ def run_game(mode, preset, difficulty):
 
         dist_map = d
 
-    last_player_axis = "x"  # for normal axis-priority
+    last_player_axis = "x"
 
     def choose_next_cell(zr, zc, pr, pc):
         if not dist_map:
@@ -816,13 +829,12 @@ def run_game(mode, preset, difficulty):
         best_dist = here
 
         if hard:
-            neighbors = [(-1,0),(1,0),(0,-1),(0,1), (-1,-1),(-1,1),(1,-1),(1,1)]
+            neighbors = [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (-1, 1), (1, -1), (1, 1)]
         else:
-            # normal axis-priority ordering
             if last_player_axis == "x":
-                neighbors = [(-1,0),(1,0),(0,-1),(0,1)]  # prefer Y moves first
+                neighbors = [(-1, 0), (1, 0), (0, -1), (0, 1)]
             else:
-                neighbors = [(0,-1),(0,1),(-1,0),(1,0)]  # prefer X moves first
+                neighbors = [(0, -1), (0, 1), (-1, 0), (1, 0)]
 
         for dr, dc in neighbors:
             rr, cc = zr + dr, zc + dc
@@ -838,9 +850,6 @@ def run_game(mode, preset, difficulty):
                 best_dist = dd
                 best_cell = (rr, cc)
 
-        # extra axis-lock bias in NORMAL mode:
-        # If last move was X -> try to reduce Y distance first (zr -> pr)
-        # If last move was Y -> try to reduce X distance first (zc -> pc)
         if not hard:
             axis_target = None
             if last_player_axis == "x" and zr != pr:
@@ -865,13 +874,24 @@ def run_game(mode, preset, difficulty):
 
         return best_cell
 
-    # ================================
-    # END Part 2/3
-    # ================================
-# ================================
-# Block World - Alpha 0.6 (Full)
-# Part 3/3
-# ================================
+    # ======================================================
+    # ---------------- DEATH / RESPAWN -----------------------
+    # ======================================================
+    def apply_death_penalty():
+        # Lose half of each inventory stack (floor)
+        for bid in list(inventory.keys()):
+            if bid == VOID:
+                continue
+            inventory[bid] = int(inventory.get(bid, 0) // 2)
+
+    def respawn_player():
+        nonlocal px, py, health, damage_timer, frames_since_damage, heal_tick_timer, invuln_timer
+        px, py = float(respawn_x), float(respawn_y)
+        health = float(MAX_HEALTH)
+        damage_timer = 0
+        frames_since_damage = 999999
+        heal_tick_timer = 0
+        invuln_timer = RESPAWN_IMMUNITY_FRAMES
 
     # ======================================================
     # ---------------- MAIN LOOP ----------------------------
@@ -880,38 +900,59 @@ def run_game(mode, preset, difficulty):
     running = True
 
     while running:
-        clock.tick(60)
+        clock.tick(FPS)
         frame += 1
 
         mx, my = pygame.mouse.get_pos()
-
-        # Determine paused state (you requested: pause world + player)
         paused = show_options_menu or show_save_menu
 
-        # ---- blink timer always ticks (visual ok) ----
+        # ---- blink timer always ticks ----
         blink_timer += 1
         if blink_timer > blink_interval + blink_duration:
             blink_timer = 0
 
-        # ---- damage cooldown ticks only when not paused ----
+        # ---- Day/Night cycle ticks only when not paused ----
+        if mode == "survival" and (not paused):
+            prev_is_night = is_night
+
+            cycle_frame = (cycle_frame + 1) % CYCLE_FRAMES
+            is_night = (cycle_frame >= DAY_FRAMES)
+
+            # Transition: DAY -> NIGHT
+            if (not prev_is_night) and is_night:
+                chance = BLOOD_MOON_CHANCE_HARD if hard else BLOOD_MOON_CHANCE_NORMAL
+                blood_moon = (random.random() < chance)
+
+                # Blood moon: every dirt patch spawns a zombie (try all; cap prevents overflow)
+                if blood_moon:
+                    for (tr, tc) in patch_spawn_cells:
+                        spawn_zombie_at_tile(tr, tc)
+
+            # Transition: NIGHT -> DAY (morning)
+            if prev_is_night and (not is_night):
+                blood_moon = False
+                # Morning: all zombies become one-shot
+                for z in zombies:
+                    z["hp"] = 1
+
+        # ---- invulnerability timer ticks only when not paused ----
+        if not paused and invuln_timer > 0:
+            invuln_timer -= 1
+
+        # ---- damage cooldown / passive heal ticks only when not paused ----
         if not paused:
             if damage_timer > 0:
                 damage_timer -= 1
 
-            # passive healing timing
             frames_since_damage += 1
             if health < MAX_HEALTH and frames_since_damage >= HEAL_DELAY_FRAMES:
                 heal_tick_timer += 1
                 if heal_tick_timer >= HEAL_TICK_FRAMES:
                     heal_tick_timer = 0
                     health = min(float(MAX_HEALTH), health + HEAL_AMOUNT)
-        else:
-            # freeze heal tick while paused (full pause)
-            heal_tick_timer = heal_tick_timer
 
         # ======================================================
         # ---------------- PLAYER MOVEMENT ----------------------
-        # (PAUSED => no movement)
         # ======================================================
         if not paused:
             dx = dy = 0
@@ -952,14 +993,12 @@ def run_game(mode, preset, difficulty):
 
         # ======================================================
         # ---------------- CAMERA / SEEN / SPAWNS --------------
-        # (PAUSED => camera still follows player, but player doesn't move anyway)
         # ======================================================
         cam_x = px - screen_width // 2
         cam_y = py - view_height // 2
         cam_x = max(-screen_width // 2, min(cam_x, world_px_w - screen_width // 2))
         cam_y = max(-view_height // 2, min(cam_y, world_px_h - view_height // 2))
 
-        # mark seen always (so if you open menu, it doesn't break state)
         mark_seen_chunks(cam_x, cam_y)
 
         # spawns paused when menu open
@@ -985,13 +1024,14 @@ def run_game(mode, preset, difficulty):
 
         # ======================================================
         # ---------------- ZOMBIE UPDATE ------------------------
-        # (PAUSED => no zombie movement or attacks)
         # ======================================================
         if mode == "survival" and (not paused):
             if frame % PATH_UPDATE_FRAMES == 0:
                 rebuild_dist_map()
 
-            z_speed = player_speed * zombie_speed_factor
+            # Blood moon speed override, else normal scaling
+            z_speed = player_speed * (BLOOD_MOON_Z_SPEED_FACTOR if (is_night and blood_moon) else base_zombie_speed_factor)
+
             pr = int(py // blocksize)
             pc = int(px // blocksize)
 
@@ -999,7 +1039,6 @@ def run_game(mode, preset, difficulty):
                 zr = int(z["y"] // blocksize)
                 zc = int(z["x"] // blocksize)
 
-                # fallback direct vector
                 vx = px - z["x"]
                 vy = py - z["y"]
                 dist_to_player = math.hypot(vx, vy)
@@ -1018,7 +1057,6 @@ def run_game(mode, preset, difficulty):
                         vx = mvx / md
                         vy = mvy / md
 
-                # move with collision
                 nxz = z["x"] + vx * z_speed
                 nyz = z["y"] + vy * z_speed
                 if not zombie_solid_at(nxz, z["y"]):
@@ -1026,13 +1064,27 @@ def run_game(mode, preset, difficulty):
                 if not zombie_solid_at(z["x"], nyz):
                     z["y"] = nyz
 
-                # attack check
+                # attack check (blocked by invulnerability)
+                if invuln_timer > 0:
+                    continue
+
                 dist_now = math.hypot(px - z["x"], py - z["y"])
                 if dist_now < 20 and damage_timer == 0 and health > 0:
-                    health = max(0.0, health - (1.0 * damage_mult))
+                    dmg_mult = base_damage_mult
+                    if is_night and blood_moon:
+                        dmg_mult *= BLOOD_MOON_DAMAGE_MULT
+
+                    health = max(0.0, health - (1.0 * dmg_mult))
                     damage_timer = ZOMBIE_DAMAGE_COOLDOWN
                     frames_since_damage = 0
                     heal_tick_timer = 0
+
+        # ======================================================
+        # ---------------- DEATH CHECK --------------------------
+        # ======================================================
+        if mode == "survival" and health <= 0.0:
+            apply_death_penalty()
+            respawn_player()
 
         # ======================================================
         # ---------------- EVENTS -------------------------------
@@ -1071,6 +1123,8 @@ def run_game(mode, preset, difficulty):
                             "world": world,
                             "px": px,
                             "py": py,
+                            "respawn_x": respawn_x,
+                            "respawn_y": respawn_y,
                             "inventory": inventory,
                             "better_grass": better_grass_enabled,
                             "mode": mode,
@@ -1084,6 +1138,10 @@ def run_game(mode, preset, difficulty):
                             "house_next_spawn_frame": list(house_next_spawn_frame),
                             "frames_since_damage": frames_since_damage,
                             "heal_tick_timer": heal_tick_timer,
+                            "invuln_timer": invuln_timer,
+                            "cycle_frame": cycle_frame,
+                            "is_night": is_night,
+                            "blood_moon": blood_moon,
                         }
 
                         if e.button == 3:
@@ -1093,8 +1151,10 @@ def run_game(mode, preset, difficulty):
                                 data = load_game(clicked_slot)
                                 if data:
                                     world = data.get("world", world)
-                                    px = data.get("px", px)
-                                    py = data.get("py", py)
+                                    px = float(data.get("px", px))
+                                    py = float(data.get("py", py))
+                                    respawn_x = float(data.get("respawn_x", respawn_x))
+                                    respawn_y = float(data.get("respawn_y", respawn_y))
                                     inventory = data.get("inventory", inventory)
                                     better_grass_enabled = data.get("better_grass", better_grass_enabled)
                                     health = float(data.get("health", health))
@@ -1104,6 +1164,10 @@ def run_game(mode, preset, difficulty):
                                     house_next_spawn_frame = list(data.get("house_next_spawn_frame", house_next_spawn_frame))
                                     frames_since_damage = int(data.get("frames_since_damage", frames_since_damage))
                                     heal_tick_timer = int(data.get("heal_tick_timer", heal_tick_timer))
+                                    invuln_timer = int(data.get("invuln_timer", invuln_timer))
+                                    cycle_frame = int(data.get("cycle_frame", cycle_frame))
+                                    is_night = bool(data.get("is_night", is_night))
+                                    blood_moon = bool(data.get("blood_moon", blood_moon))
                                     dist_map = {}
                                     selected_block = DELETE if mode == "survival" else GRASS
                             else:
@@ -1195,7 +1259,6 @@ def run_game(mode, preset, difficulty):
 
         # ======================================================
         # ---------------- MINING (HOLD) ------------------------
-        # (PAUSED => mining frozen)
         # ======================================================
         if (not paused) and mode == "survival" and mining and mine_target and pygame.mouse.get_pressed()[0]:
             r, c = mine_target
@@ -1232,10 +1295,7 @@ def run_game(mode, preset, difficulty):
         for rr in range(start_row, end_row):
             for cc in range(start_col, end_col):
                 bid = get_block(rr, cc)
-                if bid == GRASS and better_grass_enabled and grass_dark:
-                    img = grass_dark
-                else:
-                    img = block_images.get(bid)
+                img = get_block_img(bid, (mode == "survival" and is_night), better_grass_enabled)
                 if img:
                     screen.blit(img, (cc * blocksize - cam_x, rr * blocksize - cam_y))
 
@@ -1244,9 +1304,10 @@ def run_game(mode, preset, difficulty):
             for z in zombies:
                 sx = z["x"] - cam_x
                 sy = z["y"] - cam_y
-                pygame.draw.rect(screen, (40, 180, 40), (sx - 12, sy - 12, 24, 24))
+                body_col = (180, 40, 40) if (is_night and blood_moon) else (40, 180, 40)
+                pygame.draw.rect(screen, body_col, (sx - 12, sy - 12, 24, 24))
                 pygame.draw.rect(screen, (0, 0, 0), (sx - 12, sy - 18, 24, 4))
-                hpw = int(24 * max(0.0, z["hp"]) / float(zombie_hits_to_kill))
+                hpw = int(24 * max(0.0, z["hp"]) / float(max(1, base_zombie_hits_to_kill)))
                 pygame.draw.rect(screen, (255, 0, 0), (sx - 12, sy - 18, hpw, 4))
 
         # hover highlight
@@ -1269,12 +1330,15 @@ def run_game(mode, preset, difficulty):
             pygame.draw.rect(screen, (255, 220, 0), (x, y, fill, bar_h))
 
         # player sprite (blink)
-        if blink_interval <= blink_timer < blink_interval + blink_duration:
-            base_img = player_eyeclosed_img
-        else:
-            base_img = player_img
+        base_img = player_eyeclosed_img if (blink_interval <= blink_timer < blink_interval + blink_duration) else player_img
         rot = pygame.transform.rotate(base_img, angle)
         screen.blit(rot, rot.get_rect(center=(cx, cy)))
+
+        # invulnerability shield (visual ring)
+        if mode == "survival" and invuln_timer > 0:
+            # pulsing ring
+            pulse = 6 + int(4 * math.sin(frame * 0.25))
+            pygame.draw.circle(screen, (255, 255, 0), (cx, cy), 22 + pulse, 2)
 
         # health bar
         if mode == "survival":
@@ -1288,6 +1352,20 @@ def run_game(mode, preset, difficulty):
             pygame.draw.rect(screen, (220, 40, 40), (bar_x, bar_y, fill, bar_h))
             hp_label = small_font.render("HP", True, (255, 255, 255))
             screen.blit(hp_label, (bar_x, bar_y - 16))
+
+            # day/night UI text
+            if cycle_frame < DAY_FRAMES:
+                t = DAY_FRAMES - cycle_frame
+                phase = "DAY"
+            else:
+                t = CYCLE_FRAMES - cycle_frame
+                phase = "NIGHT"
+            secs_left = int(t / FPS)
+            info = f"{phase} {secs_left:02d}s"
+            if is_night and blood_moon:
+                info += "  BLOOD MOON!"
+            info_txt = small_font.render(info, True, (255, 255, 255))
+            screen.blit(info_txt, (bar_x, bar_y + 24))
 
         # options button
         pygame.draw.rect(screen, (60, 60, 60), options_button_rect, border_radius=6)
@@ -1360,6 +1438,3 @@ while True:
     run_game(mode, preset, difficulty)
 
 pygame.quit()
-# ================================
-# END Part 3/3
-# ================================
