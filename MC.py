@@ -512,12 +512,55 @@ def run_game(mode, preset, difficulty):
     show_options_menu = False
     show_save_menu = False
 
+    # ======================================================
+    # ---------------- WORLD SETUP --------------------------
+    # ======================================================
     world = generate_world(preset, difficulty)
 
+    # ======================================================
+    # ---------------- WORLD HELPERS ------------------------
+    # ======================================================
+    def get_block(r, c):
+        if 0 <= r < world_rows and 0 <= c < world_cols:
+            return world[r][c]
+        return VOID
+
+    def solid_at(px_, py_):
+        c = int(px_ // blocksize)
+        r = int(py_ // blocksize)
+        bid = get_block(r, c)
+        return bid == VOID or (bid in SOLID_BLOCKS)
+
+    def find_safe_spawn(start_px, start_py, max_radius_tiles=20):
+        start_r = int(start_py // blocksize)
+        start_c = int(start_px // blocksize)
+
+        for radius in range(max_radius_tiles + 1):
+            for dr in range(-radius, radius + 1):
+                for dc in range(-radius, radius + 1):
+                    r = start_r + dr
+                    c = start_c + dc
+                    if 0 <= r < world_rows and 0 <= c < world_cols:
+                        bid = get_block(r, c)
+                        if bid != VOID and bid not in SOLID_BLOCKS:
+                            x = c * blocksize + blocksize / 2
+                            y = r * blocksize + blocksize / 2
+                            if not solid_at(x, y):
+                                return x, y
+
+        return blocksize, blocksize  # absolute fallback
+
+    # ======================================================
+    # ---------------- PLAYER INIT --------------------------
+    # ======================================================
     inventory = {bid: 0 for bid in BLOCKS.keys()}
     px = (world_cols * blocksize) // 2
     py = (world_rows * blocksize) // 2
-    respawn_x, respawn_y = float(px), float(py)
+    px, py = find_safe_spawn(px, py)
+
+    respawn_x, respawn_y = px, py
+
+
 
     selected_block = DELETE if mode == "survival" else GRASS
 
@@ -571,6 +614,24 @@ def run_game(mode, preset, difficulty):
         r = int(py_ // blocksize)
         bid = get_block(r, c)
         return bid == VOID or (bid in SOLID_BLOCKS)
+    
+    def find_safe_spawn(start_px, start_py, max_radius_tiles=20):
+        start_r = int(start_py // blocksize)
+        start_c = int(start_px // blocksize)
+
+        for radius in range(max_radius_tiles + 1):
+            for dr in range(-radius, radius + 1):
+                for dc in range(-radius, radius + 1):
+                    r = start_r + dr
+                    c = start_c + dc
+                    if 0 <= r < world_rows and 0 <= c < world_cols:
+                        bid = get_block(r, c)
+                        if bid != VOID and bid not in SOLID_BLOCKS:
+                            x = c * blocksize + blocksize / 2
+                            y = r * blocksize + blocksize / 2
+                            if not solid_at(x, y):
+                                return x, y
+        return blocksize, blocksize
 
     def zombie_solid_at(x, y):
         h = ZOMBIE_HITBOX // 2 - 1
@@ -877,6 +938,7 @@ def run_game(mode, preset, difficulty):
     # ======================================================
     # ---------------- DEATH / RESPAWN -----------------------
     # ======================================================
+
     def apply_death_penalty():
         # Lose half of each inventory stack (floor)
         for bid in list(inventory.keys()):
@@ -886,7 +948,7 @@ def run_game(mode, preset, difficulty):
 
     def respawn_player():
         nonlocal px, py, health, damage_timer, frames_since_damage, heal_tick_timer, invuln_timer
-        px, py = float(respawn_x), float(respawn_y)
+        px, py = find_safe_spawn(respawn_x, respawn_y)
         health = float(MAX_HEALTH)
         damage_timer = 0
         frames_since_damage = 999999

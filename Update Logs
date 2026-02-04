@@ -168,3 +168,8 @@ Alpha-0.8 World update
  - added blood moon
   - makes zombies stronger
   - spawn faster, damage more, go faster
+
+Alpha-0.9 Spawn update
+ - added spawn protection
+ - added prevention of spawning in blocks
+ - patched bugs
