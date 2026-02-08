@@ -173,3 +173,10 @@ Alpha-0.9 Spawn update
  - added spawn protection
  - added prevention of spawning in blocks
  - patched bugs
+
+Alpha-0.99 Alpha Altar
+ - added altar
+ - added altar breaking and its effects
+ - added block dropping system
+ - added altar block
+ - added altar debugging

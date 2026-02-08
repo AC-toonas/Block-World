@@ -1,6 +1,5 @@
 # ==========================================
-# Block World - Alpha 0.7 (Full)
-# Day/Night + Blood Moon + Respawn Shield
+# Block World - Alpha 0.9 (ALTAR + DROPS FIX)
 # ==========================================
 import pygame
 import os
@@ -10,17 +9,20 @@ import pickle
 from collections import deque
 
 # ==========================================================
-# -------------------- VERSION ------------------------------
+# VERSION
 # ==========================================================
-GAME_VERSION = "Alpha-0.7"
+GAME_VERSION = "Alpha-0.9"
 
 # ==========================================================
-# -------------------- CONFIG -------------------------------
+# CONFIG
 # ==========================================================
 blocksize = 32
 base_cols = 25
 base_rows = 15
-world_multiplier = 15
+
+# WORLD IS DOUBLED
+world_multiplier = 30
+
 toolbar_height = 64
 
 screen_width = base_cols * blocksize
@@ -30,79 +32,77 @@ screen_height = view_height + toolbar_height
 world_cols = base_cols * world_multiplier
 world_rows = base_rows * world_multiplier
 
-player_speed = 4
 PLAYER_SIZE = 32
 HITBOX_SIZE = 24
+player_speed = 4
+
+FPS = 60
 
 # ==========================================================
-# -------------------- COMBAT -------------------------------
+# COMBAT
 # ==========================================================
 MAX_HEALTH = 10
 ZOMBIE_HITBOX = 20
 ZOMBIE_DAMAGE_COOLDOWN = 60
 MAX_ZOMBIES_TOTAL = 35
 
-# Normal mode
 NORMAL_ZOMBIE_SPEED_FACTOR = 0.75
-NORMAL_ZOMBIE_HITS = 3
-NORMAL_DIRT_SPAWN = 0.20
-NORMAL_HOUSE_SPAWN = 0.10
-
-# Hard mode
 HARD_ZOMBIE_SPEED_FACTOR = 0.90
-HARD_ZOMBIE_HITS = 5
-HARD_DIRT_SPAWN = 0.25
-HARD_HOUSE_SPAWN = 0.25
-HARD_DAMAGE_MULT = 1.5
 
+NORMAL_ZOMBIE_HITS = 3
+HARD_ZOMBIE_HITS = 5
+
+NORMAL_DIRT_SPAWN = 0.20
+HARD_DIRT_SPAWN = 0.25
+
+NORMAL_HOUSE_SPAWN = 0.10
+HARD_HOUSE_SPAWN = 0.25
+
+HARD_DAMAGE_MULT = 1.5
 HOUSE_RESPAWN_SECONDS = 10
 
 # ==========================================================
-# ---------------- PATHFINDING ------------------------------
+# PATHFINDING
 # ==========================================================
 PATH_RADIUS_TILES = 28
 PATH_UPDATE_FRAMES = 8
 
 # ==========================================================
-# ---------------- PASSIVE HEAL -----------------------------
+# PASSIVE HEAL (FIX: these were missing in your file)
 # ==========================================================
-HEAL_DELAY_FRAMES = 60 * 4
-HEAL_TICK_FRAMES = 60 * 2
-HEAL_AMOUNT = 1.0
+HEAL_DELAY_FRAMES = 60 * 4      # 4 seconds after last hit
+HEAL_TICK_FRAMES  = 60 * 2      # heal every 2 seconds
+HEAL_AMOUNT       = 1.0         # heal 1 HP per tick
 
 # ==========================================================
-# ---------------- DAY / NIGHT ------------------------------
-# 1 min day + 1 min night at 60fps
+# DAY / NIGHT
 # ==========================================================
-FPS = 60
 DAY_SECONDS = 60
 NIGHT_SECONDS = 60
 DAY_FRAMES = DAY_SECONDS * FPS
 NIGHT_FRAMES = NIGHT_SECONDS * FPS
 CYCLE_FRAMES = DAY_FRAMES + NIGHT_FRAMES
 
-# Blood moon chance per night start
 BLOOD_MOON_CHANCE_NORMAL = 0.25
 BLOOD_MOON_CHANCE_HARD = 0.30
-
 BLOOD_MOON_DAMAGE_MULT = 1.5
-BLOOD_MOON_Z_SPEED_FACTOR = 0.95  # 95% of player's speed
+BLOOD_MOON_Z_SPEED_FACTOR = 0.95
 
-# Spawn immunity (first spawn + after death)
 RESPAWN_IMMUNITY_SECONDS = 3.5
 RESPAWN_IMMUNITY_FRAMES = int(RESPAWN_IMMUNITY_SECONDS * FPS)
 
-# Night darkness tint (multiply)
-NIGHT_TINT = (150, 150, 150, 255)  # darker
-BETTER_GRASS_TINT = (120, 180, 120, 255)
+# ==========================================================
+# ALTAR / DROPS
+# ==========================================================
+CORE = 8
+CORE_MINE_TIME = FPS * 10                 # 10 seconds
+ALTAR_BROKEN_PAUSE_FRAMES = FPS * 5       # 5 seconds pause text
+ALTAR_ZOMBIE_SPEED_MULT = 1.05            # after altar breaks
+
+ITEM_PICKUP_RADIUS = 22                   # pickup distance
 
 # ==========================================================
-# -------------------- OPTIONS ------------------------------
-# ==========================================================
-better_grass_enabled = False
-
-# ==========================================================
-# ---------------- BLOCK DEFINITIONS ------------------------
+# BLOCKS
 # ==========================================================
 BLOCKS = {
     0: "void",
@@ -113,6 +113,7 @@ BLOCKS = {
     5: "water",
     6: "stone",
     7: "brick",
+    8: "core",   # NEW
 }
 
 VOID = 0
@@ -124,11 +125,11 @@ WATER = 5
 STONE = 6
 BRICK = 7
 
-SOLID_BLOCKS = {WOOD, LEAVES, STONE, BRICK}
+SOLID_BLOCKS = {WOOD, LEAVES, STONE, BRICK, CORE}
 DELETE = -1
 
 # ==========================================================
-# -------------------- INIT --------------------------------
+# INIT
 # ==========================================================
 pygame.init()
 screen = pygame.display.set_mode((screen_width, screen_height))
@@ -143,20 +144,30 @@ button_font = pygame.font.SysFont(None, 36)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # ==========================================================
-# -------------------- LOAD IMAGES --------------------------
+# LOAD IMAGES
 # ==========================================================
 block_images = {}
 for bid, name in BLOCKS.items():
-    path = os.path.join(BASE_DIR, f"{name}.png")
-    if os.path.exists(path):
-        img = pygame.image.load(path).convert_alpha()
+    p = os.path.join(BASE_DIR, f"{name}.png")
+    if os.path.exists(p):
+        img = pygame.image.load(p).convert_alpha()
         block_images[bid] = pygame.transform.scale(img, (blocksize, blocksize))
 
 player_img = pygame.image.load(os.path.join(BASE_DIR, "player.png")).convert_alpha()
 player_img = pygame.transform.scale(player_img, (32, 32))
 
-player_eyeclosed_img = pygame.image.load(os.path.join(BASE_DIR, "player-eyeclosed.png")).convert_alpha()
+player_eyeclosed_img = pygame.image.load(
+    os.path.join(BASE_DIR, "player-eyeclosed.png")
+).convert_alpha()
 player_eyeclosed_img = pygame.transform.scale(player_eyeclosed_img, (32, 32))
+
+# ==========================================================
+# IMAGE TINTING / NIGHT VARIANTS
+# ==========================================================
+NIGHT_TINT = (150, 150, 150, 255)
+BETTER_GRASS_TINT = (120, 180, 120, 255)
+
+better_grass_enabled = False
 
 def tint_image(img, tint):
     if img is None:
@@ -167,11 +178,9 @@ def tint_image(img, tint):
     s.blit(overlay, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
     return s
 
-# Better grass variant (daytime)
 grass_normal = block_images.get(GRASS)
 grass_better = tint_image(grass_normal, BETTER_GRASS_TINT) if grass_normal else None
 
-# Night variants (precompute)
 night_block_images = {}
 for bid, img in block_images.items():
     night_block_images[bid] = tint_image(img, NIGHT_TINT)
@@ -179,16 +188,14 @@ for bid, img in block_images.items():
 grass_better_night = tint_image(grass_better, NIGHT_TINT) if grass_better else None
 
 def get_block_img(bid, is_night, better_grass):
-    # Grass special handling
     if bid == GRASS and better_grass and grass_better is not None:
         return grass_better_night if is_night else grass_better
-    # Normal blocks
     if is_night:
         return night_block_images.get(bid)
     return block_images.get(bid)
 
 # ==========================================================
-# ---------------- WORLD GENERATION -------------------------
+# WORLD GENERATION (NOW RETURNS altar tile coords)
 # ==========================================================
 def generate_world(preset, difficulty):
     world = [[GRASS for _ in range(world_cols)] for _ in range(world_rows)]
@@ -202,133 +209,149 @@ def generate_world(preset, difficulty):
                     return False
         return True
 
-    if preset == "free":
-        return world
+    if preset != "free":
+        crowded = (preset == "crowded")
+        hard = (difficulty == "hard")
+        structure_factor = 0.6 if (hard and not crowded) else 1.0
 
-    crowded = (preset == "crowded")
-    hard = (difficulty == "hard")
+        lake_count = int((60 if crowded else 30) * structure_factor)
+        tree_count = int((250 if crowded else 140) * structure_factor)
+        house_count = int((55 if crowded else 28) * structure_factor)
+        rock_vein_count = int((150 if crowded else 85) * structure_factor)
+        big_tree_count = int((80 if crowded else 42) * structure_factor)
+        dirt_patch_count = int((220 if crowded else 130) * structure_factor)
 
-    # In hard mode: fewer structures overall (except crowded keeps it intense)
-    if hard and not crowded:
-        structure_factor = 0.6
-    else:
-        structure_factor = 1.0
+        # lakes
+        for _ in range(lake_count):
+            for _ in range(80):
+                size = random.randint(3, 5)
+                row = random.randint(1, world_rows - size - 2)
+                col = random.randint(1, world_cols - size - 2)
+                if area_is_clear(row, col, size, size, pad=2):
+                    for r in range(size):
+                        for c in range(size):
+                            world[row + r][col + c] = WATER
+                    break
 
-    lake_count = int((60 if crowded else 30) * structure_factor)
-    tree_count = int((250 if crowded else 140) * structure_factor)
-    house_count = int((55 if crowded else 28) * structure_factor)
-    rock_vein_count = int((150 if crowded else 85) * structure_factor)
-    big_tree_count = int((80 if crowded else 42) * structure_factor)
-    dirt_patch_count = int((220 if crowded else 130) * structure_factor)
+        # small trees
+        for _ in range(tree_count):
+            attempts = 200 if crowded else 120
+            for _ in range(attempts):
+                row = random.randint(2, world_rows - 3)
+                col = random.randint(2, world_cols - 3)
+                if area_is_clear(row - 1, col - 1, 3, 3, pad=2):
+                    world[row][col] = WOOD
+                    world[row - 1][col] = LEAVES
+                    world[row + 1][col] = LEAVES
+                    world[row][col - 1] = LEAVES
+                    world[row][col + 1] = LEAVES
+                    break
 
-    # lakes
-    for _ in range(lake_count):
-        for _ in range(80):
-            size = random.randint(3, 5)
-            row = random.randint(1, world_rows - size - 2)
-            col = random.randint(1, world_cols - size - 2)
-            if area_is_clear(row, col, size, size, pad=2):
-                for r in range(size):
-                    for c in range(size):
-                        world[row + r][col + c] = WATER
-                break
+        # houses (4x4)
+        for _ in range(house_count):
+            for _ in range(140):
+                top = random.randint(2, world_rows - 6)
+                left = random.randint(2, world_cols - 6)
+                pad = 1 if crowded else 2
+                if area_is_clear(top, left, 4, 4, pad=pad):
+                    for r in range(top, top + 4):
+                        for c in range(left, left + 4):
+                            inside = (top + 1 <= r <= top + 2) and (left + 1 <= c <= left + 2)
+                            world[r][c] = WOOD if inside else BRICK
+                    break
 
-    # small trees
-    for _ in range(tree_count):
-        attempts = 200 if crowded else 120
-        for _ in range(attempts):
-            row = random.randint(2, world_rows - 3)
-            col = random.randint(2, world_cols - 3)
-            if area_is_clear(row - 1, col - 1, 3, 3, pad=2):
-                world[row][col] = WOOD
-                world[row - 1][col] = LEAVES
-                world[row + 1][col] = LEAVES
-                world[row][col - 1] = LEAVES
-                world[row][col + 1] = LEAVES
-                break
+        # rock veins
+        for _ in range(rock_vein_count):
+            for _ in range(140):
+                top = random.randint(2, world_rows - 6)
+                left = random.randint(2, world_cols - 6)
+                pad = 1 if crowded else 2
+                if area_is_clear(top, left, 4, 4, pad=pad):
+                    n = random.randint(6, 12)
+                    cells = [(top + r, left + c) for r in range(4) for c in range(4)]
+                    random.shuffle(cells)
+                    for i in range(n):
+                        rr, cc = cells[i]
+                        world[rr][cc] = STONE
+                    break
 
-    # houses (4x4)
-    for _ in range(house_count):
-        for _ in range(140):
-            top = random.randint(2, world_rows - 6)
-            left = random.randint(2, world_cols - 6)
-            pad = 1 if crowded else 2
-            if area_is_clear(top, left, 4, 4, pad=pad):
-                for r in range(top, top + 4):
-                    for c in range(left, left + 4):
-                        inside = (top + 1 <= r <= top + 2) and (left + 1 <= c <= left + 2)
-                        world[r][c] = WOOD if inside else BRICK
-                break
-
-    # rock veins
-    for _ in range(rock_vein_count):
-        for _ in range(140):
-            top = random.randint(2, world_rows - 6)
-            left = random.randint(2, world_cols - 6)
-            pad = 1 if crowded else 2
-            if area_is_clear(top, left, 4, 4, pad=pad):
-                n = random.randint(6, 12)
-                cells = [(top + r, left + c) for r in range(4) for c in range(4)]
-                random.shuffle(cells)
-                for i in range(n):
-                    rr, cc = cells[i]
-                    world[rr][cc] = STONE
-                break
-
-    # BIG TREES
-    for _ in range(big_tree_count):
-        for _ in range(160):
-            r = random.randint(3, world_rows - 5)
-            c = random.randint(3, world_cols - 5)
-            top = r - 2
-            left = c - 2
-            pad = 1 if crowded else 2
-            if area_is_clear(top, left, 6, 6, pad=pad):
-                # 2x2 trunk
-                for rr in (r, r + 1):
-                    for cc in (c, c + 1):
-                        world[rr][cc] = WOOD
-
-                # canopy ring
-                for rr in range(r - 1, r + 3):
-                    for cc in range(c - 1, c + 3):
-                        if not (r <= rr <= r + 1 and c <= cc <= c + 1):
+        # big trees
+        for _ in range(big_tree_count):
+            for _ in range(160):
+                r = random.randint(3, world_rows - 5)
+                c = random.randint(3, world_cols - 5)
+                top = r - 2
+                left = c - 2
+                pad = 1 if crowded else 2
+                if area_is_clear(top, left, 6, 6, pad=pad):
+                    for rr in (r, r + 1):
+                        for cc in (c, c + 1):
+                            world[rr][cc] = WOOD
+                    for rr in range(r - 1, r + 3):
+                        for cc in range(c - 1, c + 3):
+                            if not (r <= rr <= r + 1 and c <= cc <= c + 1):
+                                world[rr][cc] = LEAVES
+                    for rr in range(r - 2, r):
+                        for cc in range(c, c + 2):
                             world[rr][cc] = LEAVES
+                    for rr in range(r + 2, r + 4):
+                        for cc in range(c, c + 2):
+                            world[rr][cc] = LEAVES
+                    for rr in range(r, r + 2):
+                        for cc in range(c - 2, c):
+                            world[rr][cc] = LEAVES
+                    for rr in range(r, r + 2):
+                        for cc in range(c + 2, c + 4):
+                            world[rr][cc] = LEAVES
+                    break
 
-                # extra leaf lobes
-                for rr in range(r - 2, r):
-                    for cc in range(c, c + 2):
-                        world[rr][cc] = LEAVES
-                for rr in range(r + 2, r + 4):
-                    for cc in range(c, c + 2):
-                        world[rr][cc] = LEAVES
-                for rr in range(r, r + 2):
-                    for cc in range(c - 2, c):
-                        world[rr][cc] = LEAVES
-                for rr in range(r, r + 2):
-                    for cc in range(c + 2, c + 4):
-                        world[rr][cc] = LEAVES
+        # dirt patches
+        patch_sizes = [(1, 2), (2, 1), (2, 2), (2, 3), (3, 2)]
+        for _ in range(dirt_patch_count):
+            for _ in range(120):
+                h, w = random.choice(patch_sizes)
+                top = random.randint(2, world_rows - h - 3)
+                left = random.randint(2, world_cols - w - 3)
+                pad = 1 if crowded else 2
+                if area_is_clear(top, left, h, w, pad=pad):
+                    for rr in range(top, top + h):
+                        for cc in range(left, left + w):
+                            world[rr][cc] = DIRT
+                    break
 
-                break
+    # ======================================================
+    # ALTAR (ALWAYS GENERATED, even on "free")
+    # 5x5 brick ring, 3x3 stone ring, center CORE
+    # ======================================================
+    altar_r = random.randint(10, world_rows - 11)
+    altar_c = random.randint(10, world_cols - 11)
 
-    # dirt patches
-    patch_sizes = [(1, 2), (2, 1), (2, 2), (2, 3), (3, 2)]
-    for _ in range(dirt_patch_count):
-        for _ in range(120):
-            h, w = random.choice(patch_sizes)
-            top = random.randint(2, world_rows - h - 3)
-            left = random.randint(2, world_cols - w - 3)
-            pad = 1 if crowded else 2
-            if area_is_clear(top, left, h, w, pad=pad):
-                for rr in range(top, top + h):
-                    for cc in range(left, left + w):
-                        world[rr][cc] = DIRT
-                break
+    # clear a 7x7 area to grass to avoid weird overlap
+    for rr in range(altar_r - 3, altar_r + 4):
+        for cc in range(altar_c - 3, altar_c + 4):
+            if 0 <= rr < world_rows and 0 <= cc < world_cols:
+                world[rr][cc] = GRASS
 
-    return world
+    # 5x5 brick frame
+    for rr in range(altar_r - 2, altar_r + 3):
+        for cc in range(altar_c - 2, altar_c + 3):
+            if rr in (altar_r - 2, altar_r + 2) or cc in (altar_c - 2, altar_c + 2):
+                world[rr][cc] = BRICK
 
+    # 3x3 stone ring (not center)
+    for rr in range(altar_r - 1, altar_r + 2):
+        for cc in range(altar_c - 1, altar_c + 2):
+            if not (rr == altar_r and cc == altar_c):
+                world[rr][cc] = STONE
+
+    # center core
+    world[altar_r][altar_c] = CORE
+
+    print(f"[DEBUG] ALTAR CORE TILE = ({altar_r}, {altar_c})")
+
+    return world, (altar_r, altar_c)
 # ==========================================================
-# -------------------- START MENU ---------------------------
+# START MENU
 # ==========================================================
 def start_menu():
     CENTER_X = screen_width // 2
@@ -392,8 +415,10 @@ def start_menu():
         title = title_font.render(f"Block World! V: {GAME_VERSION}", True, (255, 255, 255))
         screen.blit(title, title.get_rect(center=(screen_width // 2, 130)))
 
-        draw_button(mode_survival, "Survival mode", mode_survival.collidepoint(mx, my), selected=(selected_mode == "survival"))
-        draw_button(mode_creative, "Creative mode", mode_creative.collidepoint(mx, my), selected=(selected_mode == "creative"))
+        draw_button(mode_survival, "Survival mode", mode_survival.collidepoint(mx, my),
+                    selected=(selected_mode == "survival"))
+        draw_button(mode_creative, "Creative mode", mode_creative.collidepoint(mx, my),
+                    selected=(selected_mode == "creative"))
 
         wtxt = button_font.render("World:", True, (255, 255, 255))
         screen.blit(wtxt, (CENTER_X - 180, Y_PRESET - 40))
@@ -418,7 +443,7 @@ def start_menu():
         pygame.display.flip()
 
 # ==========================================================
-# -------------------- TOOLBAR ------------------------------
+# TOOLBAR
 # ==========================================================
 def build_toolbar_slots(mode, inventory):
     ids = []
@@ -475,7 +500,7 @@ def draw_toolbar(mode, slots, selected_block, inventory, mx, my):
     return hovered_slot
 
 # ==========================================================
-# -------------------- SAVES -------------------------------
+# SAVES
 # ==========================================================
 SAVE_DIR = BASE_DIR
 
@@ -493,7 +518,6 @@ def load_game(slot):
 
 def save_exists(slot):
     return os.path.exists(os.path.join(SAVE_DIR, f"save_slot_{slot}.dat"))
-
 # ==========================================================
 # -------------------- GAME LOOP ---------------------------
 # ==========================================================
@@ -502,7 +526,6 @@ def run_game(mode, preset, difficulty):
 
     hard = (difficulty == "hard")
 
-    # base difficulty combat values
     base_zombie_speed_factor = HARD_ZOMBIE_SPEED_FACTOR if hard else NORMAL_ZOMBIE_SPEED_FACTOR
     base_zombie_hits_to_kill = HARD_ZOMBIE_HITS if hard else NORMAL_ZOMBIE_HITS
     dirt_spawn_chance = HARD_DIRT_SPAWN if hard else NORMAL_DIRT_SPAWN
@@ -512,12 +535,62 @@ def run_game(mode, preset, difficulty):
     show_options_menu = False
     show_save_menu = False
 
-    world = generate_world(preset, difficulty)
+    # ======================================================
+    # ---------------- WORLD SETUP --------------------------
+    # ======================================================
+    world, altar_pos = generate_world(preset, difficulty)
 
+    # ======================================================
+    # ---------------- WORLD HELPERS ------------------------
+    # ======================================================
+    def get_block(r, c):
+        if 0 <= r < world_rows and 0 <= c < world_cols:
+            return world[r][c]
+        return VOID
+
+    def solid_at(px_, py_):
+        c = int(px_ // blocksize)
+        r = int(py_ // blocksize)
+        bid = get_block(r, c)
+        return bid == VOID or (bid in SOLID_BLOCKS)
+
+    def find_safe_spawn(start_px, start_py, max_radius_tiles=20):
+        start_r = int(start_py // blocksize)
+        start_c = int(start_px // blocksize)
+
+        for radius in range(max_radius_tiles + 1):
+            for dr in range(-radius, radius + 1):
+                for dc in range(-radius, radius + 1):
+                    r = start_r + dr
+                    c = start_c + dc
+                    if 0 <= r < world_rows and 0 <= c < world_cols:
+                        bid = get_block(r, c)
+                        if bid != VOID and bid not in SOLID_BLOCKS:
+                            x = c * blocksize + blocksize / 2
+                            y = r * blocksize + blocksize / 2
+                            if not solid_at(x, y):
+                                return x, y
+        return blocksize, blocksize
+
+    def zombie_solid_at(x, y):
+        h = ZOMBIE_HITBOX // 2 - 1
+        for ox, oy in [(-h, -h), (h, -h), (-h, h), (h, h)]:
+            if solid_at(x + ox, y + oy):
+                return True
+        return False
+
+    def mineable(bid):
+        return bid in {DIRT, WOOD, LEAVES, STONE, BRICK, CORE}
+
+    # ======================================================
+    # ---------------- PLAYER INIT --------------------------
+    # ======================================================
     inventory = {bid: 0 for bid in BLOCKS.keys()}
     px = (world_cols * blocksize) // 2
     py = (world_rows * blocksize) // 2
-    respawn_x, respawn_y = float(px), float(py)
+    px, py = find_safe_spawn(px, py)
+
+    respawn_x, respawn_y = px, py
 
     selected_block = DELETE if mode == "survival" else GRASS
 
@@ -526,8 +599,14 @@ def run_game(mode, preset, difficulty):
     frames_since_damage = 999999
     heal_tick_timer = 0
 
-    # Spawn immunity applies on first spawn too
     invuln_timer = RESPAWN_IMMUNITY_FRAMES if mode == "survival" else 0
+
+    # altar state
+    altar_broken = False
+    altar_pause_timer = 0
+
+    # DROPS (items on ground)
+    dropped_items = []  # each: {"bid":id,"x":float,"y":float}
 
     # visuals
     blink_timer = 0
@@ -557,30 +636,6 @@ def run_game(mode, preset, difficulty):
     save_menu_rect = pygame.Rect(screen_width // 2 - 180, 120, 360, 260)
     slot_rects = [pygame.Rect(save_menu_rect.x + 40, save_menu_rect.y + 60 + i * 50, 280, 40) for i in range(3)]
     back_rect = pygame.Rect(save_menu_rect.x + 100, save_menu_rect.y + 210, 160, 36)
-
-    # ======================================================
-    # ---------------- WORLD HELPERS ------------------------
-    # ======================================================
-    def get_block(r, c):
-        if 0 <= r < world_rows and 0 <= c < world_cols:
-            return world[r][c]
-        return VOID
-
-    def solid_at(px_, py_):
-        c = int(px_ // blocksize)
-        r = int(py_ // blocksize)
-        bid = get_block(r, c)
-        return bid == VOID or (bid in SOLID_BLOCKS)
-
-    def zombie_solid_at(x, y):
-        h = ZOMBIE_HITBOX // 2 - 1
-        for ox, oy in [(-h, -h), (h, -h), (-h, h), (h, h)]:
-            if solid_at(x + ox, y + oy):
-                return True
-        return False
-
-    def mineable(bid):
-        return bid in {GRASS, DIRT, WOOD, LEAVES}
 
     # ======================================================
     # -------- STRUCTURE DETECTION (PATCHES / HOUSES) -------
@@ -633,14 +688,12 @@ def run_game(mode, preset, difficulty):
     dirt_patches = find_dirt_patches()
     houses = find_houses()
 
-    # one spawn cell per dirt patch
     patch_spawn_cells = []
     for cells in dirt_patches:
         rs = sorted([p[0] for p in cells])
         cs = sorted([p[1] for p in cells])
         patch_spawn_cells.append((rs[len(rs) // 2], cs[len(cs) // 2]))
 
-    # one spawn cell per house (prefer outside)
     house_spawn_cells = []
     for (r, c) in houses:
         candidates = [
@@ -660,7 +713,6 @@ def run_game(mode, preset, difficulty):
             chosen = (r + 1, c + 1)
         house_spawn_cells.append(chosen)
 
-    # house core wood tiles (2x2 inside). Break all 4 -> house stops spawning forever.
     house_wood_tiles = []
     for (r, c) in houses:
         house_wood_tiles.append([(r + 1, c + 1), (r + 1, c + 2), (r + 2, c + 1), (r + 2, c + 2)])
@@ -710,8 +762,7 @@ def run_game(mode, preset, difficulty):
     # ------------------- ZOMBIES ---------------------------
     # ======================================================
     zombies = []
-
-    dirt_spawned = set()  # patches that already rolled their 1-time spawn (normal behavior)
+    dirt_spawned = set()
 
     house_period_frames = int(HOUSE_RESPAWN_SECONDS * FPS)
     house_next_spawn_frame = [0 for _ in range(len(houses))]
@@ -731,10 +782,6 @@ def run_game(mode, preset, difficulty):
         return True
 
     def spawn_from_seen_sources(frame_):
-        # BLOOD MOON RULE: houses paused, dirt patches guaranteed spawn (handled on blood moon start)
-        # Normal rule: dirt patches roll once when first seen, houses roll periodically.
-
-        # dirt patches: one-time roll when first seen
         for i, (tr, tc) in enumerate(patch_spawn_cells):
             if i in dirt_spawned:
                 continue
@@ -744,7 +791,6 @@ def run_game(mode, preset, difficulty):
                 spawn_zombie_at_tile(tr, tc)
             dirt_spawned.add(i)
 
-        # houses: periodic (skip entirely on blood moon nights)
         if blood_moon:
             return
 
@@ -878,7 +924,6 @@ def run_game(mode, preset, difficulty):
     # ---------------- DEATH / RESPAWN -----------------------
     # ======================================================
     def apply_death_penalty():
-        # Lose half of each inventory stack (floor)
         for bid in list(inventory.keys()):
             if bid == VOID:
                 continue
@@ -886,7 +931,7 @@ def run_game(mode, preset, difficulty):
 
     def respawn_player():
         nonlocal px, py, health, damage_timer, frames_since_damage, heal_tick_timer, invuln_timer
-        px, py = float(respawn_x), float(respawn_y)
+        px, py = find_safe_spawn(respawn_x, respawn_y)
         health = float(MAX_HEALTH)
         damage_timer = 0
         frames_since_damage = 999999
@@ -904,42 +949,41 @@ def run_game(mode, preset, difficulty):
         frame += 1
 
         mx, my = pygame.mouse.get_pos()
-        paused = show_options_menu or show_save_menu
 
-        # ---- blink timer always ticks ----
+        if altar_pause_timer > 0:
+            altar_pause_timer -= 1
+
+        paused = show_options_menu or show_save_menu or (altar_pause_timer > 0)
+
+        # blink timer always ticks
         blink_timer += 1
         if blink_timer > blink_interval + blink_duration:
             blink_timer = 0
 
-        # ---- Day/Night cycle ticks only when not paused ----
+        # Day/Night cycle ticks only when not paused
         if mode == "survival" and (not paused):
             prev_is_night = is_night
 
             cycle_frame = (cycle_frame + 1) % CYCLE_FRAMES
             is_night = (cycle_frame >= DAY_FRAMES)
 
-            # Transition: DAY -> NIGHT
             if (not prev_is_night) and is_night:
                 chance = BLOOD_MOON_CHANCE_HARD if hard else BLOOD_MOON_CHANCE_NORMAL
                 blood_moon = (random.random() < chance)
-
-                # Blood moon: every dirt patch spawns a zombie (try all; cap prevents overflow)
                 if blood_moon:
                     for (tr, tc) in patch_spawn_cells:
                         spawn_zombie_at_tile(tr, tc)
 
-            # Transition: NIGHT -> DAY (morning)
             if prev_is_night and (not is_night):
                 blood_moon = False
-                # Morning: all zombies become one-shot
                 for z in zombies:
                     z["hp"] = 1
 
-        # ---- invulnerability timer ticks only when not paused ----
+        # invulnerability timer
         if not paused and invuln_timer > 0:
             invuln_timer -= 1
 
-        # ---- damage cooldown / passive heal ticks only when not paused ----
+        # damage cooldown / passive heal
         if not paused:
             if damage_timer > 0:
                 damage_timer -= 1
@@ -967,10 +1011,7 @@ def run_game(mode, preset, difficulty):
                 dx += 1
 
             if dx != 0 or dy != 0:
-                if abs(dx) >= abs(dy):
-                    last_player_axis = "x"
-                else:
-                    last_player_axis = "y"
+                last_player_axis = "x" if abs(dx) >= abs(dy) else "y"
 
             if dx or dy:
                 l = math.hypot(dx, dy)
@@ -992,6 +1033,15 @@ def run_game(mode, preset, difficulty):
         py = max(0, min(py, world_px_h - 1))
 
         # ======================================================
+        # PICK UP DROPPED ITEMS
+        # ======================================================
+        if not paused:
+            for it in dropped_items[:]:
+                if math.hypot(px - it["x"], py - it["y"]) <= ITEM_PICKUP_RADIUS:
+                    inventory[it["bid"]] = inventory.get(it["bid"], 0) + 1
+                    dropped_items.remove(it)
+
+        # ======================================================
         # ---------------- CAMERA / SEEN / SPAWNS --------------
         # ======================================================
         cam_x = px - screen_width // 2
@@ -1001,7 +1051,6 @@ def run_game(mode, preset, difficulty):
 
         mark_seen_chunks(cam_x, cam_y)
 
-        # spawns paused when menu open
         if mode == "survival" and (not paused) and frame % SPAWN_CHECK_FRAMES == 0:
             spawn_from_seen_sources(frame)
 
@@ -1013,7 +1062,6 @@ def run_game(mode, preset, difficulty):
         if mx != cx or my != cy:
             angle = -math.degrees(math.atan2(mx - cx, -(my - cy)))
 
-        # hovered tile
         hovered_cell = None
         if my < view_height:
             c = int((mx + cam_x) // blocksize)
@@ -1029,8 +1077,10 @@ def run_game(mode, preset, difficulty):
             if frame % PATH_UPDATE_FRAMES == 0:
                 rebuild_dist_map()
 
-            # Blood moon speed override, else normal scaling
-            z_speed = player_speed * (BLOOD_MOON_Z_SPEED_FACTOR if (is_night and blood_moon) else base_zombie_speed_factor)
+            speed_mult = ALTAR_ZOMBIE_SPEED_MULT if altar_broken else 1.0
+            z_speed = player_speed * speed_mult * (
+                BLOOD_MOON_Z_SPEED_FACTOR if (is_night and blood_moon) else base_zombie_speed_factor
+            )
 
             pr = int(py // blocksize)
             pc = int(px // blocksize)
@@ -1064,7 +1114,6 @@ def run_game(mode, preset, difficulty):
                 if not zombie_solid_at(z["x"], nyz):
                     z["y"] = nyz
 
-                # attack check (blocked by invulnerability)
                 if invuln_timer > 0:
                     continue
 
@@ -1103,7 +1152,6 @@ def run_game(mode, preset, difficulty):
                         selected_block = ids[idx]
 
             if e.type == pygame.MOUSEBUTTONDOWN:
-                # open/close options
                 if options_button_rect.collidepoint(mx, my):
                     show_options_menu = not show_options_menu
                     if show_options_menu:
@@ -1142,6 +1190,9 @@ def run_game(mode, preset, difficulty):
                             "cycle_frame": cycle_frame,
                             "is_night": is_night,
                             "blood_moon": blood_moon,
+                            "dropped_items": dropped_items,
+                            "altar_pos": altar_pos,
+                            "altar_broken": altar_broken,
                         }
 
                         if e.button == 3:
@@ -1168,6 +1219,9 @@ def run_game(mode, preset, difficulty):
                                     cycle_frame = int(data.get("cycle_frame", cycle_frame))
                                     is_night = bool(data.get("is_night", is_night))
                                     blood_moon = bool(data.get("blood_moon", blood_moon))
+                                    dropped_items = data.get("dropped_items", [])
+                                    altar_pos = tuple(data.get("altar_pos", altar_pos))
+                                    altar_broken = bool(data.get("altar_broken", altar_broken))
                                     dist_map = {}
                                     selected_block = DELETE if mode == "survival" else GRASS
                             else:
@@ -1197,7 +1251,6 @@ def run_game(mode, preset, difficulty):
                         continue
                     continue
 
-                # From here down: only allow world actions if NOT paused
                 if paused:
                     continue
 
@@ -1237,16 +1290,16 @@ def run_game(mode, preset, difficulty):
                         else:
                             world[r][c] = selected_block
                     else:
-                        # survival place (RMB)
+                        # survival place (RMB) - only place onto GRASS
                         if pygame.mouse.get_pressed()[2]:
                             if selected_block != DELETE and inventory.get(selected_block, 0) > 0:
-                                if bid == GRASS or bid == WATER:
+                                if bid == GRASS:
                                     world[r][c] = selected_block
                                     inventory[selected_block] -= 1
 
                         # survival mine (LMB)
                         if e.button == 1:
-                            if mineable(bid) and bid not in {GRASS, WATER}:
+                            if mineable(bid):
                                 mine_target = (r, c)
                                 mine_progress = 0
                                 mining = True
@@ -1268,19 +1321,29 @@ def run_game(mode, preset, difficulty):
                 mine_progress = 0
             else:
                 bid = get_block(r, c)
-                if bid == VOID or (not mineable(bid)) or bid in {GRASS, WATER}:
+                if bid == VOID or (not mineable(bid)):
                     mining = False
                     mine_target = None
                     mine_progress = 0
                 else:
                     mine_progress += 1
-                    if mine_progress >= MINE_TIME:
-                        inventory[bid] = inventory.get(bid, 0) + 1
+                    need = CORE_MINE_TIME if bid == CORE else MINE_TIME
+                    if mine_progress >= need:
+                        # DROP ITEM (not instant inventory)
+                        drop_x = c * blocksize + blocksize / 2
+                        drop_y = r * blocksize + blocksize / 2
+                        dropped_items.append({"bid": bid, "x": float(drop_x), "y": float(drop_y)})
+
+                        # altar break trigger
+                        if bid == CORE and (not altar_broken):
+                            altar_broken = True
+                            altar_pause_timer = ALTAR_BROKEN_PAUSE_FRAMES
+                            print("[DEBUG] ALTAR BROKEN!")
+
                         world[r][c] = GRASS
                         mine_progress = 0
                         mining = False
                         mine_target = None
-
         # ======================================================
         # ---------------- RENDER -------------------------------
         # ======================================================
@@ -1299,6 +1362,15 @@ def run_game(mode, preset, difficulty):
                 if img:
                     screen.blit(img, (cc * blocksize - cam_x, rr * blocksize - cam_y))
 
+        # DROPS (draw after world, before player)
+        for it in dropped_items:
+            img = block_images.get(it["bid"])
+            if img:
+                screen.blit(
+                    img,
+                    (it["x"] - cam_x - blocksize / 2, it["y"] - cam_y - blocksize / 2)
+                )
+
         # zombies
         if mode == "survival":
             for z in zombies:
@@ -1307,7 +1379,7 @@ def run_game(mode, preset, difficulty):
                 body_col = (180, 40, 40) if (is_night and blood_moon) else (40, 180, 40)
                 pygame.draw.rect(screen, body_col, (sx - 12, sy - 12, 24, 24))
                 pygame.draw.rect(screen, (0, 0, 0), (sx - 12, sy - 18, 24, 4))
-                hpw = int(24 * max(0.0, z["hp"]) / float(max(1, base_zombie_hits_to_kill)))
+                hpw = int(24 * max(0.0, z["hp"]) / float(max(1, HARD_ZOMBIE_HITS if hard else NORMAL_ZOMBIE_HITS)))
                 pygame.draw.rect(screen, (255, 0, 0), (sx - 12, sy - 18, hpw, 4))
 
         # hover highlight
@@ -1321,12 +1393,14 @@ def run_game(mode, preset, difficulty):
 
         # mining bar
         if mode == "survival" and mining:
+            bid = get_block(mine_target[0], mine_target[1]) if mine_target else None
+            need = CORE_MINE_TIME if bid == CORE else MINE_TIME
             bar_w = 220
             bar_h = 16
             x = screen_width // 2 - bar_w // 2
             y = view_height - 26
             pygame.draw.rect(screen, (120, 120, 120), (x, y, bar_w, bar_h))
-            fill = int(bar_w * (mine_progress / MINE_TIME))
+            fill = int(bar_w * (mine_progress / max(1, need)))
             pygame.draw.rect(screen, (255, 220, 0), (x, y, fill, bar_h))
 
         # player sprite (blink)
@@ -1334,9 +1408,8 @@ def run_game(mode, preset, difficulty):
         rot = pygame.transform.rotate(base_img, angle)
         screen.blit(rot, rot.get_rect(center=(cx, cy)))
 
-        # invulnerability shield (visual ring)
+        # invulnerability shield
         if mode == "survival" and invuln_timer > 0:
-            # pulsing ring
             pulse = 6 + int(4 * math.sin(frame * 0.25))
             pygame.draw.circle(screen, (255, 255, 0), (cx, cy), 22 + pulse, 2)
 
@@ -1353,7 +1426,6 @@ def run_game(mode, preset, difficulty):
             hp_label = small_font.render("HP", True, (255, 255, 255))
             screen.blit(hp_label, (bar_x, bar_y - 16))
 
-            # day/night UI text
             if cycle_frame < DAY_FRAMES:
                 t = DAY_FRAMES - cycle_frame
                 phase = "DAY"
@@ -1364,6 +1436,8 @@ def run_game(mode, preset, difficulty):
             info = f"{phase} {secs_left:02d}s"
             if is_night and blood_moon:
                 info += "  BLOOD MOON!"
+            if altar_broken:
+                info += "  ALTAR BROKEN!"
             info_txt = small_font.render(info, True, (255, 255, 255))
             screen.blit(info_txt, (bar_x, bar_y + 24))
 
@@ -1372,8 +1446,13 @@ def run_game(mode, preset, difficulty):
         dots = font.render("⋮", True, (255, 255, 255))
         screen.blit(dots, dots.get_rect(center=options_button_rect.center))
 
-        # paused overlay text
-        if paused:
+        # altar broken pause text
+        if altar_pause_timer > 0:
+            txt = title_font.render("ALTAR BROKEN", True, (255, 60, 60))
+            screen.blit(txt, txt.get_rect(center=(screen_width // 2, view_height // 2)))
+
+        # paused overlay text (menus)
+        if (show_options_menu or show_save_menu):
             overlay = font.render("Menu open, world paused", True, (255, 255, 255))
             screen.blit(overlay, overlay.get_rect(center=(screen_width // 2, view_height // 2)))
 
@@ -1431,7 +1510,7 @@ def run_game(mode, preset, difficulty):
         pygame.display.flip()
 
 # ==========================================================
-# -------------------- ENTRY -------------------------------
+# ENTRY
 # ==========================================================
 while True:
     mode, preset, difficulty = start_menu()
