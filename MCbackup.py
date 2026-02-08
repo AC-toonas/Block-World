@@ -199,6 +199,8 @@ def get_block_img(bid, is_night, better_grass):
 # ==========================================================
 def generate_world(preset, difficulty):
     world = [[GRASS for _ in range(world_cols)] for _ in range(world_rows)]
+    altar_r = random.randint(10, world_rows - 11)
+    altar_c = random.randint(10, world_cols - 11)
 
     def area_is_clear(top, left, height, width, pad=1):
         for r in range(top - pad, top + height + pad):
@@ -206,6 +208,8 @@ def generate_world(preset, difficulty):
                 if r < 0 or c < 0 or r >= world_rows or c >= world_cols:
                     return False
                 if world[r][c] != GRASS:
+                    return False
+                if abs(r - altar_r) <= 3 and abs(c - altar_c) <= 3:
                     return False
         return True
 
@@ -323,14 +327,7 @@ def generate_world(preset, difficulty):
     # ALTAR (ALWAYS GENERATED, even on "free")
     # 5x5 brick ring, 3x3 stone ring, center CORE
     # ======================================================
-    altar_r = random.randint(10, world_rows - 11)
-    altar_c = random.randint(10, world_cols - 11)
 
-    # clear a 7x7 area to grass to avoid weird overlap
-    for rr in range(altar_r - 3, altar_r + 4):
-        for cc in range(altar_c - 3, altar_c + 4):
-            if 0 <= rr < world_rows and 0 <= cc < world_cols:
-                world[rr][cc] = GRASS
 
     # 5x5 brick frame
     for rr in range(altar_r - 2, altar_r + 3):
@@ -1363,13 +1360,21 @@ def run_game(mode, preset, difficulty):
                     screen.blit(img, (cc * blocksize - cam_x, rr * blocksize - cam_y))
 
         # DROPS (draw after world, before player)
+        half = blocksize // 2
+        offset = (blocksize - half) // 2
+
         for it in dropped_items:
             img = block_images.get(it["bid"])
-            if img:
-                screen.blit(
-                    img,
-                    (it["x"] - cam_x - blocksize / 2, it["y"] - cam_y - blocksize / 2)
-                )
+            if not img:
+                continue
+
+            small = pygame.transform.scale(img, (half, half))
+
+            sx = it["x"] - cam_x - half / 2
+            sy = it["y"] - cam_y - half / 2
+
+            screen.blit(small, (sx, sy))
+
 
         # zombies
         if mode == "survival":
